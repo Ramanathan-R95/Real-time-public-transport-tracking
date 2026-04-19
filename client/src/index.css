@@ -1,0 +1,157 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #080a0f;
+  --surface:    #0f1219;
+  --surface2:   #161b26;
+  --surface3:   #1c2333;
+  --border:     #1e2535;
+  --border2:    #2a3347;
+  --accent:     #00e5a0;
+  --accent-dim: #00b87e;
+  --accent-glow:rgba(0,229,160,0.15);
+  --warning:    #ffb020;
+  --danger:     #ff4d4d;
+  --info:       #4d9fff;
+  --text:       #e2e8f0;
+  --text-dim:   #64748b;
+  --text-faint: #334155;
+  --font-mono:  'Space Mono', monospace;
+  --font-body:  'DM Sans', sans-serif;
+  --radius-sm:  6px;
+  --radius:     10px;
+  --radius-lg:  16px;
+  --radius-xl:  24px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.65;
+  min-height: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: var(--font-body); cursor: pointer; border: none; outline: none; }
+input, select, textarea { font-family: var(--font-body); outline: none; }
+a { color: inherit; text-decoration: none; }
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes scanline {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
+}
+@keyframes dash {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(0,229,160,0.2); }
+  50%       { box-shadow: 0 0 40px rgba(0,229,160,0.4); }
+}
+
+.fade-in  { animation: fadeIn  0.35s ease forwards; }
+.fade-up  { animation: fadeUp  0.5s  ease forwards; }
+.floating { animation: float   3s    ease-in-out infinite; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ── Leaflet dark popups ── */
+.dark-popup .leaflet-popup-content-wrapper {
+  background: #0f1219;
+  border: 1px solid #1e2535;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  padding: 0;
+}
+.dark-popup .leaflet-popup-tip { background: #0f1219; }
+.dark-popup .leaflet-popup-content { margin: 0; }
+
+/* ── Stop tooltips ── */
+.stop-tooltip {
+  background: #0f1219 !important;
+  border: 1px solid #1e2535 !important;
+  color: #e2e8f0 !important;
+  font-family: 'Space Mono', monospace !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+  padding: 4px 10px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+  white-space: nowrap !important;
+}
+.stop-tooltip::before { display: none !important; }
+
+/* ── Shared button styles ── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 28px;
+  background: var(--accent);
+  color: #080a0f;
+  border-radius: var(--radius);
+  font-weight: 700;
+  font-size: 14px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-primary:hover { background: var(--accent-dim); transform: translateY(-1px); }
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 28px;
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius);
+  font-size: 14px;
+  border: 1px solid var(--border2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Card ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* ── Stagger children ── */
+.stagger > * { opacity: 0; animation: fadeUp 0.5s ease forwards; }
+.stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger > *:nth-child(2) { animation-delay: 0.12s; }
+.stagger > *:nth-child(3) { animation-delay: 0.19s; }
+.stagger > *:nth-child(4) { animation-delay: 0.26s; }
+.stagger > *:nth-child(5) { animation-delay: 0.33s; }
+.stagger > *:nth-child(6) { animation-delay: 0.40s; }
