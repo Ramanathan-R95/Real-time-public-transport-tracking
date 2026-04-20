@@ -1,10 +1,10 @@
 import axios from 'axios';
-
-const BASE = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../config';
 
 const adminApi = axios.create({
-  baseURL: `${BASE}/api/admin`,
-  timeout: 15000,
+  baseURL: `${API_URL}/api/admin`,
+  timeout: 20000,
+  withCredentials: false,
 });
 
 adminApi.interceptors.request.use((config) => {
