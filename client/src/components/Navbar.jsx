@@ -22,14 +22,14 @@ export default function Navbar() {
   const hideOn = ['/driver/route-setup'];
   if (hideOn.includes(location.pathname)) return null;
 
-  const links = [
-    { label: 'Home',       path: '/' },
-    { label: 'Live Track', path: '/track' },
-    { label: 'Driver',     path: isDriver ? '/driver'      : '/login' },
-    { label: 'Admin',      path: isAdmin  ? '/admin'       : '/admin/login' },
+ const links = [
+    { label: 'Home',     path: '/' },
+    { label: 'Track',    path: '/track' },
+    { label: 'About',    path: '/about' },
+    { label: 'Driver',   path: isDriver ? '/driver'  : '/login' },
+    { label: 'Admin',    path: isAdmin  ? '/admin'   : '/admin/login' },
   ];
-
-  const isActive = (path) =>
+    const isActive = (path) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
 
   const navBg = scrolled || menuOpen
@@ -125,6 +125,28 @@ export default function Navbar() {
               {label}
             </button>
           ))}
+          {/* After the links map, before Live Map button */}
+          {!isDriver && (
+            <button
+              onClick={() => navigate('/register')}
+              style={{
+                marginLeft: 6,
+                padding: '7px 14px',
+                background: 'transparent',
+                color: 'var(--text-dim)',
+                border: '1px solid var(--border2)',
+                borderRadius: 8,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12, letterSpacing: 0.5,
+                cursor: 'pointer', transition: 'all 0.2s',
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border2)'; e.currentTarget.style.color = 'var(--text-dim)'; }}
+            >
+              Register
+            </button>
+          )}
 
           <button
             onClick={() => navigate('/track')}

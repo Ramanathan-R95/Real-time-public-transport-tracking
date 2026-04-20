@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import Navbar          from './components/Navbar';
 import HomePage        from './pages/HomePage';
 import LoginPage       from './pages/LoginPage';
+import RegisterPage    from './pages/RegisterPage';
 import DriverPage      from './pages/DriverPage';
 import UserPage        from './pages/UserPage';
 import RouteSetupPage  from './pages/RouteSetupPage';
@@ -39,6 +40,7 @@ function Layout() {
         <Route path="/"                element={<HomePage />} />
         <Route path="/track"           element={<UserPage />} />
         <Route path="/login"           element={<LoginPage />} />
+        <Route path="/register"        element={<RegisterPage />} />
 
         {/* Driver */}
         <Route path="/driver"          element={<PrivateRoute><DriverPage /></PrivateRoute>} />
