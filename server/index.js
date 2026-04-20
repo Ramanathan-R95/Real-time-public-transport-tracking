@@ -44,6 +44,17 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
+// Temporary debug — remove after fixing
+app.get('/cors-test', (req, res) => {
+  res.json({
+    origin:         req.headers.origin || 'none',
+    clientOrigin:   process.env.CLIENT_ORIGIN,
+    nodeEnv:        process.env.NODE_ENV,
+    mongoUri:       process.env.MONGO_URI ? 'SET' : 'NOT SET',
+    redisUrl:       process.env.UPSTASH_REDIS_REST_URL ? 'SET' : 'NOT SET',
+    jwtSecret:      process.env.JWT_SECRET ? 'SET' : 'NOT SET',
+  });
+});
 app.use(express.urlencoded({ extended: true }));
 
 // Security headers
