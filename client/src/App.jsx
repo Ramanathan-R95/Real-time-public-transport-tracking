@@ -10,6 +10,7 @@ import RouteSetupPage  from './pages/RouteSetupPage';
 import TripHistoryPage from './pages/TripHistoryPage';
 import AdminLoginPage  from './pages/AdminLoginPage';
 import AdminPage       from './pages/AdminPage';
+import AboutPage       from './pages/AboutPage';
 
 function PrivateRoute({ children }) {
   return localStorage.getItem('driver_token')
@@ -39,6 +40,7 @@ function Layout() {
         {/* Public */}
         <Route path="/"                element={<HomePage />} />
         <Route path="/track"           element={<UserPage />} />
+        <Route path="/about"           element={<AboutPage />} />
         <Route path="/login"           element={<LoginPage />} />
         <Route path="/register"        element={<RegisterPage />} />
 
