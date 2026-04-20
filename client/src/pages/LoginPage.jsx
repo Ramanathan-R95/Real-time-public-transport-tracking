@@ -129,16 +129,22 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <a href="/" style={{ color: 'var(--text-dim)', fontSize: 13, textDecoration: 'none', fontFamily: 'var(--font-mono)' }}>
+        <div style={{ marginTop: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <a href="/" style={{ color: 'var(--text-dim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
               ← Home
             </a>
-            <a href="/track" style={{ color: 'var(--text-dim)', fontSize: 13, textDecoration: 'none' }}>
+            <a href="/track" style={{ color: 'var(--text-dim)', fontSize: 13 }}>
               Student view →
             </a>
           </div>
-          <div style={{ marginTop: 12, textAlign: 'center' }}>
-            <a href="/admin/login" style={{ color: 'var(--text-faint)', fontSize: 11, textDecoration: 'none', fontFamily: 'var(--font-mono)', letterSpacing: 1 }}>
+          <div style={{ marginTop: 14, textAlign: 'center', fontSize: 13, color: 'var(--text-dim)' }}>
+            New driver?{' '}
+            <a href="/register" style={{ color: 'var(--accent)', fontWeight: 500 }}>
+              Create an account
+            </a>
+          </div>
+          <div style={{ marginTop: 10, textAlign: 'center' }}>
+            <a href="/admin/login" style={{ color: 'var(--text-faint)', fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: 1 }}>
               ADMIN PANEL
             </a>
           </div>

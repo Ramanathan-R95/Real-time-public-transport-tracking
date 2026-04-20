@@ -4,10 +4,13 @@ const Driver = require('./models/Driver');
 const Route = require('./models/Route');
 const Admin  = require('./models/Admin');
 async function seed() {
+  
   console.log(process.env.MONGO_URI)
   await mongoose.connect(process.env.MONGO_URI);
   console.log('MongoDB connected');
-
+  await Driver.deleteMany({});
+  await Route.deleteMany({});
+  await Admin.deleteMany({});
   // --- Seed Routes ---
   const existingRoute = await Route.findOne({ routeNumber: 'R1' });
   let route1;
