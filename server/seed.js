@@ -6,7 +6,9 @@ const Admin  = require('./models/Admin');
 async function seed() {
   
   console.log(process.env.MONGO_URI)
-  await mongoose.connect(process.env.MONGO_URI);
+  // await mongoose.connect(process.env.MONGO_URI);
+  await mongoose.connect("mongodb+srv://giyu:DGWBRu3bXAmQH6XC@cluster0.bffh59k.mongodb.net/college-transport?appName=Cluster0");
+  
   console.log('MongoDB connected');
   await Driver.deleteMany({});
   await Route.deleteMany({});
