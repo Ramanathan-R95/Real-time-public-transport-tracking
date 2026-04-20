@@ -1,10 +1,10 @@
 import axios from 'axios';
-
-const BASE = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../config';
 
 const api = axios.create({
-  baseURL: `${BASE}/api`,
-  timeout: 15000,
+  baseURL: `${API_URL}/api`,
+  timeout: 20000,
+  withCredentials: false,
 });
 
 api.interceptors.request.use((config) => {
@@ -17,7 +17,6 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      // Token expired — clear and redirect
       localStorage.removeItem('driver_token');
       localStorage.removeItem('driver_info');
       window.location.href = '/login';
