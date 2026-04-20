@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
+const BASE = import.meta.env.VITE_API_URL || '';
+
 export function useSSE({ routeId }) {
-  const [position, setPosition] = useState(null);
-  const [tripStatus, setTripStatus] = useState('waiting');
-  const [eta, setEta] = useState(null);
-  const [connected, setConnected] = useState(false);
+  const [position,    setPosition]    = useState(null);
+  const [tripStatus,  setTripStatus]  = useState('waiting');
+  const [eta,         setEta]         = useState(null);
+  const [connected,   setConnected]   = useState(false);
   const [activeBuses, setActiveBuses] = useState([]);
   const esRef = useRef(null);
 
@@ -13,7 +15,9 @@ export function useSSE({ routeId }) {
 
     function connect() {
       if (esRef.current) esRef.current.close();
-      const es = new EventSource(`/sse/route/${routeId}`);
+
+      const url = `${BASE}/sse/route/${routeId}`;
+      const es  = new EventSource(url);
       esRef.current = es;
 
       es.onopen = () => setConnected(true);
@@ -27,11 +31,14 @@ export function useSSE({ routeId }) {
       es.addEventListener('trip_status', (e) => {
         const data = JSON.parse(e.data);
         setTripStatus(data.status);
+        if (data.status === 'ended') {
+          setEta(null);
+          setPosition(null);
+        }
       });
 
       es.addEventListener('buses_update', (e) => {
-        const data = JSON.parse(e.data);
-        setActiveBuses(data);
+        setActiveBuses(JSON.parse(e.data));
       });
 
       es.addEventListener('ping', () => setConnected(true));

@@ -155,3 +155,14 @@ a { color: inherit; text-decoration: none; }
 .stagger > *:nth-child(4) { animation-delay: 0.26s; }
 .stagger > *:nth-child(5) { animation-delay: 0.33s; }
 .stagger > *:nth-child(6) { animation-delay: 0.40s; }
+/* ── Responsive grid helpers ── */
+@media (max-width: 768px) {
+  .hide-mobile { display: none !important; }
+}
+@media (min-width: 769px) {
+  .hide-desktop { display: none !important; }
+}
+
+/* ── Leaflet z-index fix (sits under fixed navbar) ── */
+.leaflet-top { z-index: 400 !important; }
+.leaflet-bottom { z-index: 400 !important; }

@@ -6,8 +6,23 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/sse': 'http://localhost:5000',
+      '/api':  'http://localhost:5000',
+      '/sse':  'http://localhost:5000',
+    },
+  },
+  build: {
+    outDir:      'dist',
+    sourcemap:   false,
+    minify:      'esbuild',
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor:  ['react', 'react-dom', 'react-router-dom'],
+          leaflet: ['leaflet'],
+          axios:   ['axios'],
+        },
+      },
     },
   },
 });

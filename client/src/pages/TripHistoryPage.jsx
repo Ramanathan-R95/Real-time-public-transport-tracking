@@ -23,8 +23,8 @@ export default function TripHistoryPage() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '86px 20px 24px' }}>
-      <div style={{ maxWidth: 540, margin: '0 auto' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '80px 16px 32px' }}>
+        <div style={{ maxWidth: 560, margin: '0 auto' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 28 }}>

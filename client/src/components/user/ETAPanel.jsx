@@ -1,24 +1,81 @@
 import React, { useEffect, useState } from 'react';
-import { formatETA, haversine, formatDistance } from '../../utils/geoMath';
+import { formatETA, formatDistance, haversine } from '../../utils/geoMath';
+
+function ConfidenceDots({ confidence }) {
+  const level = confidence >= 0.7 ? 3 : confidence >= 0.4 ? 2 : confidence > 0 ? 1 : 0;
+  return (
+    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+      {[1, 2, 3].map((d) => (
+        <div key={d} style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: d <= level ? 'var(--accent)' : 'var(--border2)',
+          transition: 'background 0.3s',
+        }} />
+      ))}
+      <span style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        color: 'var(--text-dim)',
+        marginLeft: 4,
+        letterSpacing: 1,
+      }}>
+        {level === 3 ? 'HIGH' : level === 2 ? 'MED' : level === 1 ? 'LOW' : 'EST'}
+      </span>
+    </div>
+  );
+}
 
 export default function ETAPanel({ eta, stops, currentPosition }) {
-  const [countdown, setCountdown] = useState(eta?.eta_seconds || null);
+  // Local countdown ticks every second between server updates
+  const [liveEtas, setLiveEtas] = useState([]);
 
   useEffect(() => {
-    if (eta?.eta_seconds) setCountdown(eta.eta_seconds);
+    if (!eta?.stops?.length) return;
+    setLiveEtas(eta.stops.map((s) => ({ ...s })));
   }, [eta]);
 
-  // Tick countdown locally between server updates
   useEffect(() => {
-    if (!countdown) return;
-    const t = setInterval(() => setCountdown((c) => Math.max(0, c - 1)), 1000);
+    if (!liveEtas.length) return;
+    const t = setInterval(() => {
+      setLiveEtas((prev) =>
+        prev.map((s) => ({
+          ...s,
+          etaSeconds: Math.max(0, s.etaSeconds - 1),
+        }))
+      );
+    }, 1000);
     return () => clearInterval(t);
-  }, [countdown]);
+  }, [liveEtas.length > 0]);
 
-  const nextStop = stops?.find((s) => {
-    if (!currentPosition) return false;
-    return haversine(currentPosition.lat, currentPosition.lng, s.lat, s.lng) > 30;
-  });
+  if (!eta && !stops?.length) return null;
+
+  // If no ETA from server yet, show stop list with distances only
+  if (!eta?.stops?.length) {
+    return (
+      <div style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 14,
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10,
+            color: 'var(--text-dim)', letterSpacing: 2, marginBottom: 6,
+          }}>
+            STOPS ON THIS ROUTE
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+            ETA will appear once the bus starts moving.
+          </div>
+        </div>
+        <StopList stops={stops} currentPosition={currentPosition} liveEtas={[]} />
+      </div>
+    );
+  }
+
+  const nextStop = liveEtas[0];
+  const arrived  = nextStop?.etaSeconds === 0;
 
   return (
     <div style={{
@@ -27,146 +84,179 @@ export default function ETAPanel({ eta, stops, currentPosition }) {
       borderRadius: 14,
       overflow: 'hidden',
     }}>
-      {/* ETA header */}
+
+      {/* ── Big ETA header ── */}
       <div style={{
-        padding: '18px 20px',
+        padding: '20px 20px 16px',
         borderBottom: '1px solid var(--border)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        background: arrived ? 'rgba(0,229,160,0.04)' : 'transparent',
       }}>
-        <div>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: 4,
+        }}>
           <div style={{
-            fontSize: 10,
-            fontFamily: 'var(--font-mono)',
-            color: 'var(--text-dim)',
-            letterSpacing: 2,
-            marginBottom: 4,
+            fontFamily: 'var(--font-mono)', fontSize: 10,
+            color: 'var(--text-dim)', letterSpacing: 2,
           }}>
-            ESTIMATED ARRIVAL
+            {arrived ? 'ARRIVING NOW' : 'NEXT STOP'}
           </div>
-          <div style={{
-            fontSize: 36,
-            fontFamily: 'var(--font-mono)',
-            fontWeight: 700,
-            color: countdown > 0 ? 'var(--accent)' : 'var(--text-dim)',
-            lineHeight: 1,
-          }}>
-            {formatETA(countdown)}
-          </div>
+          <ConfidenceDots confidence={eta.confidence || 0} />
         </div>
 
-        {eta?.confidence !== undefined && (
-          <div style={{ textAlign: 'right' }}>
-            <div style={{
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-dim)',
-              letterSpacing: 2,
-              marginBottom: 4,
-            }}>
-              CONFIDENCE
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+          <div style={{
+            fontSize: 42,
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 700,
+            color: arrived ? 'var(--accent)' : 'var(--text)',
+            lineHeight: 1,
+            animation: arrived ? 'glow-pulse 1.5s infinite' : 'none',
+          }}>
+            {arrived ? 'NOW' : formatETA(nextStop?.etaSeconds)}
+          </div>
+          {!arrived && (
+            <div style={{ fontSize: 14, color: 'var(--text-dim)' }}>
+              until
             </div>
-            <div style={{
-              fontSize: 20,
-              fontFamily: 'var(--font-mono)',
-              color: eta.confidence > 0.7 ? 'var(--accent)' : 'var(--warning)',
-            }}>
-              {eta.fallback ? 'N/A' : `${Math.round(eta.confidence * 100)}%`}
-            </div>
+          )}
+        </div>
+
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>
+          {nextStop?.stopName}
+        </div>
+
+        {currentPosition && stops?.[nextStop?.stopIdx] && (
+          <div style={{
+            marginTop: 6,
+            fontSize: 12,
+            color: 'var(--text-dim)',
+            fontFamily: 'var(--font-mono)',
+          }}>
+            {formatDistance(haversine(
+              currentPosition.lat, currentPosition.lng,
+              stops[nextStop.stopIdx].lat, stops[nextStop.stopIdx].lng
+            ))} away
           </div>
         )}
       </div>
 
-      {/* Next stop */}
-      {nextStop && (
-        <div style={{
-          padding: '12px 20px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}>
-          <div style={{
-            width: 8, height: 8,
-            borderRadius: '50%',
-            background: 'var(--accent)',
-            flexShrink: 0,
-            animation: 'pulse 1.5s infinite',
-          }} />
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: 1 }}>
-              NEXT STOP
+      {/* ── All remaining stops ── */}
+      <StopList
+        stops={stops}
+        currentPosition={currentPosition}
+        liveEtas={liveEtas}
+        nearestIdx={eta.nearestStopIdx}
+      />
+    </div>
+  );
+}
+
+function StopList({ stops, currentPosition, liveEtas, nearestIdx = 0 }) {
+  return (
+    <div>
+      <div style={{
+        padding: '10px 20px 6px',
+        fontFamily: 'var(--font-mono)', fontSize: 10,
+        color: 'var(--text-dim)', letterSpacing: 2,
+      }}>
+        ALL STOPS
+      </div>
+
+      {stops?.map((stop, i) => {
+        const isPassed  = i < nearestIdx;
+        const isNext    = i === nearestIdx;
+        const etaEntry  = liveEtas.find((e) => e.stopIdx === i);
+        const distM     = currentPosition
+          ? haversine(currentPosition.lat, currentPosition.lng, stop.lat, stop.lng)
+          : null;
+
+        return (
+          <div key={stop._id || i} style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            padding: '10px 20px',
+            borderBottom: i < stops.length - 1 ? '1px solid var(--border)' : 'none',
+            background: isNext ? 'rgba(0,229,160,0.03)' : 'transparent',
+            opacity: isPassed ? 0.35 : 1,
+            transition: 'opacity 0.4s, background 0.3s',
+          }}>
+
+            {/* Stop indicator */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              flexShrink: 0,
+              gap: 0,
+            }}>
+              <div style={{
+                width: isPassed ? 10 : isNext ? 12 : 10,
+                height: isPassed ? 10 : isNext ? 12 : 10,
+                borderRadius: '50%',
+                background: isPassed
+                  ? 'var(--text-faint)'
+                  : isNext
+                  ? 'var(--accent)'
+                  : 'transparent',
+                border: isPassed
+                  ? 'none'
+                  : isNext
+                  ? '2px solid var(--accent)'
+                  : '2px solid var(--border2)',
+                boxShadow: isNext ? '0 0 8px rgba(0,229,160,0.4)' : 'none',
+                transition: 'all 0.3s',
+              }} />
             </div>
-            <div style={{ fontSize: 14, fontWeight: 500, marginTop: 2 }}>
-              {nextStop.name}
+
+            {/* Stop name */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 13,
+                fontWeight: isNext ? 600 : 400,
+                color: isPassed ? 'var(--text-dim)' : isNext ? 'var(--accent)' : 'var(--text)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {isPassed && '✓ '}{stop.name}
+              </div>
+              {distM !== null && !isPassed && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
+                  {formatDistance(distM)}
+                </div>
+              )}
+            </div>
+
+            {/* ETA */}
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              {isPassed ? (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
+                  passed
+                </span>
+              ) : etaEntry ? (
+                <div>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: isNext ? 16 : 13,
+                    fontWeight: isNext ? 700 : 400,
+                    color: isNext ? 'var(--accent)' : 'var(--text-dim)',
+                  }}>
+                    {etaEntry.etaSeconds === 0 ? 'NOW' : formatETA(etaEntry.etaSeconds)}
+                  </div>
+                </div>
+              ) : (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
+                  —
+                </span>
+              )}
             </div>
           </div>
-          {currentPosition && (
-            <div style={{
-              marginLeft: 'auto',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 13,
-              color: 'var(--text-dim)',
-            }}>
-              {formatDistance(haversine(currentPosition.lat, currentPosition.lng, nextStop.lat, nextStop.lng))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* All stops */}
-      <div style={{ padding: '12px 20px' }}>
-        <div style={{
-          fontSize: 10,
-          fontFamily: 'var(--font-mono)',
-          color: 'var(--text-dim)',
-          letterSpacing: 2,
-          marginBottom: 12,
-        }}>
-          ALL STOPS
-        </div>
-        {stops?.map((stop, i) => {
-          const dist = currentPosition
-            ? haversine(currentPosition.lat, currentPosition.lng, stop.lat, stop.lng)
-            : null;
-          const isPassed = dist !== null && dist < 30;
-
-          return (
-            <div key={stop._id || i} style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '8px 0',
-              borderBottom: i < stops.length - 1 ? '1px solid var(--border)' : 'none',
-              opacity: isPassed ? 0.4 : 1,
-              transition: 'opacity 0.3s',
-            }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                <div style={{
-                  width: 10, height: 10,
-                  borderRadius: '50%',
-                  border: `2px solid ${isPassed ? 'var(--text-dim)' : 'var(--accent)'}`,
-                  background: isPassed ? 'var(--text-dim)' : 'transparent',
-                  flexShrink: 0,
-                }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: isPassed ? 400 : 500 }}>
-                  {stop.name}
-                </div>
-              </div>
-              <div style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                color: 'var(--text-dim)',
-              }}>
-                {dist !== null ? formatDistance(dist) : '—'}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+        );
+      })}
     </div>
   );
 }

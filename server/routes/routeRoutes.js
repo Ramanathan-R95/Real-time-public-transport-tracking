@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const auth = require('../middleware/auth');
+const auth   = require('../middleware/auth');
 const {
   getAllRoutes,
   getRouteById,
@@ -8,10 +8,13 @@ const {
   updateMyRoute,
 } = require('../controllers/routeController');
 
-router.get('/', getAllRoutes);
-router.get('/my', auth, getMyRoute);
+// IMPORTANT: /my must be registered BEFORE /:id
+// otherwise Express treats "my" as a route id
+router.get('/my',  auth, getMyRoute);
+router.put('/my',  auth, updateMyRoute);
+
+router.get('/',    getAllRoutes);
 router.get('/:id', getRouteById);
-router.post('/', auth, createRoute);
-router.put('/my', auth, updateMyRoute);
+router.post('/',   auth, createRoute);
 
 module.exports = router;

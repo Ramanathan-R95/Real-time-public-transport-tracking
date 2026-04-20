@@ -137,8 +137,8 @@ export default function DriverPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '24px 20px' }}>
-      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '80px 16px 32px' }}>
+        <div style={{ maxWidth: 520, margin: '0 auto' }}>
 
         {/* Header */}
         <div style={{

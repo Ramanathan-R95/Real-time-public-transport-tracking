@@ -221,7 +221,7 @@ export default function UserPage() {
         {selectedDriverId && (
           <ETAPanel
             eta={eta}
-            stops={selectedRoute?.stops || []}
+            stops={selectedRoute?.stops?.sort((a, b) => a.order - b.order) || []}
             currentPosition={displayPos}
           />
         )}

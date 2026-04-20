@@ -4,6 +4,7 @@ const Driver = require('./models/Driver');
 const Route = require('./models/Route');
 const Admin  = require('./models/Admin');
 async function seed() {
+  console.log(process.env.MONGO_URI)
   await mongoose.connect(process.env.MONGO_URI);
   console.log('MongoDB connected');
 
