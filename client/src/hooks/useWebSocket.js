@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getAllBuffered, clearBuffer } from '../services/idbBuffer';
-
-const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:5000/ws';
+import { WS_URL } from '../config';
 
 export function useWebSocket({ token, onMessage }) {
   const ws             = useRef(null);
@@ -14,12 +13,10 @@ export function useWebSocket({ token, onMessage }) {
 
     setStatus('reconnecting');
 
-    const url = `${WS_BASE}?token=${token}`;
-    ws.current = new WebSocket(url);
+    ws.current = new WebSocket(`${WS_URL}?token=${token}`);
 
     ws.current.onopen = async () => {
       setStatus('connected');
-      // Flush offline buffer on reconnect
       try {
         const buffered = await getAllBuffered();
         if (buffered.length > 0) {
@@ -27,7 +24,7 @@ export function useWebSocket({ token, onMessage }) {
           await clearBuffer();
         }
       } catch (err) {
-        console.error('Buffer flush error:', err);
+        console.error('[WS] Buffer flush error:', err);
       }
     };
 
@@ -37,7 +34,6 @@ export function useWebSocket({ token, onMessage }) {
 
     ws.current.onclose = (e) => {
       setStatus('disconnected');
-      // Don't reconnect on auth failure
       if (e.code === 4001) return;
       reconnectTimer.current = setTimeout(connect, 3000);
     };
