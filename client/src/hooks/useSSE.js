@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-
-const BASE = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../config';
 
 export function useSSE({ routeId }) {
   const [position,    setPosition]    = useState(null);
@@ -8,50 +7,98 @@ export function useSSE({ routeId }) {
   const [eta,         setEta]         = useState(null);
   const [connected,   setConnected]   = useState(false);
   const [activeBuses, setActiveBuses] = useState([]);
-  const esRef = useRef(null);
+  const esRef        = useRef(null);
+  const retryRef     = useRef(null);
+  const retryCount   = useRef(0);
 
   useEffect(() => {
     if (!routeId) return;
 
     function connect() {
-      if (esRef.current) esRef.current.close();
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
 
-      const url = `${BASE}/sse/route/${routeId}`;
-      const es  = new EventSource(url);
+      const url = `${API_URL}/sse/route/${routeId}`;
+      console.log('[SSE] Connecting:', url);
+
+      let es;
+      try {
+        es = new EventSource(url);
+      } catch (err) {
+        console.error('[SSE] Failed to create EventSource:', err);
+        retryRef.current = setTimeout(connect, 3000);
+        return;
+      }
       esRef.current = es;
 
-      es.onopen = () => setConnected(true);
+      // Mark connected on open
+      es.onopen = () => {
+        console.log('[SSE] Connected');
+        setConnected(true);
+        retryCount.current = 0;
+      };
 
-      es.addEventListener('position', (e) => {
-        const data = JSON.parse(e.data);
-        setPosition(data);
-        if (data.eta) setEta(data.eta);
+      es.addEventListener('ping', () => {
+        setConnected(true);
       });
 
-      es.addEventListener('trip_status', (e) => {
-        const data = JSON.parse(e.data);
-        setTripStatus(data.status);
-        if (data.status === 'ended') {
-          setEta(null);
-          setPosition(null);
+      es.addEventListener('position', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          console.log('[SSE] Position:', data.lat, data.lng);
+          setConnected(true);
+          setPosition(data);
+          if (data.eta) setEta(data.eta);
+        } catch (err) {
+          console.error('[SSE] Position parse error:', err);
         }
       });
 
-      es.addEventListener('buses_update', (e) => {
-        setActiveBuses(JSON.parse(e.data));
+      es.addEventListener('trip_status', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          console.log('[SSE] Trip status:', data.status);
+          setTripStatus(data.status);
+          if (data.status === 'ended') {
+            setEta(null);
+            setPosition(null);
+          }
+        } catch {}
       });
 
-      es.addEventListener('ping', () => setConnected(true));
+      es.addEventListener('buses_update', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          console.log('[SSE] Buses update:', data);
+          setConnected(true);
+          setActiveBuses(Array.isArray(data) ? data : []);
+        } catch (err) {
+          console.error('[SSE] Buses parse error:', err);
+        }
+      });
 
-      es.onerror = () => {
+      es.onerror = (err) => {
+        console.error('[SSE] Error, retrying...', err);
         setConnected(false);
         es.close();
-        setTimeout(connect, 3000);
+        esRef.current = null;
+        retryCount.current += 1;
+        const delay = Math.min(1000 * retryCount.current, 10000);
+        retryRef.current = setTimeout(connect, delay);
       };
     }
 
     connect();
-    return () => esRef.current?.close();
+
+    return () => {
+      clearTimeout(retryRef.current);
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
   }, [routeId]);
 
   return { position, tripStatus, eta, connected, activeBuses };

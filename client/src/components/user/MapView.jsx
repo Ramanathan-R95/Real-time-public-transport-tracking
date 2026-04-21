@@ -1,214 +1,210 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import { bearing } from '../../utils/geoMath';
 
-// Dark arrow marker that's clearly visible
-function createBusIcon(bearingDeg = 0, vehicleNumber = '', isSelected = false) {
-  const size   = isSelected ? 52 : 42;
-  const color  = isSelected ? '#00e5a0' : '#64748b';
-  const ring   = isSelected ? '#ffffff' : '#374151';
-  const shadow = isSelected ? `0 0 20px rgba(0,229,160,0.6)` : 'none';
+// ── Bus icon — dark, clearly visible arrow ──
+function makeBusIcon(deg, vehicleNum, isSelected) {
+  const size  = isSelected ? 54 : 44;
+  const half  = size / 2;
+  const color = isSelected ? '#00e5a0' : '#94a3b8';
+  const bg    = '#0a0c10';
+  const ring  = isSelected ? '#00e5a0' : '#334155';
+  const glow  = isSelected ? `filter: drop-shadow(0 0 8px #00e5a080);` : '';
+  const label = (vehicleNum || 'BUS').slice(0, 9);
 
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg"
-      width="${size}" height="${size + 16}"
-      viewBox="0 0 ${size} ${size + 16}">
+  // Arrow triangle pointing UP before rotation transform
+  const arrowSize  = size * 0.28;
+  const arrowTip   = half - arrowSize * 1.1;
+  const arrowBaseY = half + arrowSize * 0.5;
+  const arrowBaseW = arrowSize * 0.7;
 
-      <!-- Outer ring -->
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}"
-        fill="#0a0c10" stroke="${ring}" stroke-width="2"/>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg"
+    width="${size}" height="${size + 18}"
+    viewBox="0 0 ${size} ${size + 18}"
+    style="${glow}">
 
-      <!-- Inner fill -->
-      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 7}"
-        fill="${color}" opacity="0.15"/>
+    <circle cx="${half}" cy="${half}" r="${half - 1}"
+      fill="${bg}" stroke="${ring}" stroke-width="${isSelected ? 2.5 : 1.5}"/>
 
-      <!-- Direction arrow — rotates with bearing -->
-      <g transform="rotate(${bearingDeg}, ${size / 2}, ${size / 2})">
-        <!-- Arrow pointing up (north) before rotation -->
-        <polygon
-          points="${size / 2},${size / 2 - 14}
-                  ${size / 2 - 7},${size / 2 + 6}
-                  ${size / 2},${size / 2 + 2}
-                  ${size / 2 + 7},${size / 2 + 6}"
-          fill="${color}"
-          stroke="#0a0c10"
-          stroke-width="1"
-        />
-      </g>
-
-      <!-- Center dot -->
-      <circle cx="${size / 2}" cy="${size / 2}" r="3"
+    <g transform="rotate(${deg}, ${half}, ${half})">
+      <polygon
+        points="${half},${arrowTip}
+                ${half - arrowBaseW},${arrowBaseY}
+                ${half},${arrowBaseY - arrowSize * 0.3}
+                ${half + arrowBaseW},${arrowBaseY}"
         fill="${color}"/>
+    </g>
 
-      <!-- Vehicle label below -->
-      <rect x="2" y="${size + 1}" width="${size - 4}" height="13"
-        rx="4" fill="#0a0c10" stroke="${color}" stroke-width="1"/>
-      <text x="${size / 2}" y="${size + 11}"
-        font-family="monospace" font-size="7"
-        font-weight="bold" text-anchor="middle"
-        fill="${color}">
-        ${(vehicleNumber || 'BUS').slice(0, 10)}
-      </text>
-    </svg>
-  `;
+    <circle cx="${half}" cy="${half}" r="3" fill="${color}"/>
+
+    <rect x="1" y="${size + 1}" width="${size - 2}" height="15"
+      rx="4" fill="${bg}" stroke="${color}" stroke-width="1"/>
+    <text x="${half}" y="${size + 11.5}"
+      font-family="monospace" font-size="7.5"
+      font-weight="bold" text-anchor="middle" fill="${color}">
+      ${label}
+    </text>
+  </svg>`;
 
   return L.divIcon({
     html:       svg,
-    iconSize:   [size, size + 16],
-    iconAnchor: [size / 2, size / 2],
+    iconSize:   [size, size + 18],
+    iconAnchor: [half, half],
     className:  '',
   });
 }
 
-function createStopIcon(order, isFirst, isLast) {
-  const color = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#374151';
-  const text  = isFirst ? 'S' : isLast ? 'E' : String(order);
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
-      <circle cx="14" cy="14" r="11"
-        fill="#0a0c10" stroke="${color}" stroke-width="2"/>
-      <text x="14" y="18"
-        font-family="monospace" font-size="${text.length > 1 ? 7 : 9}"
-        font-weight="bold" text-anchor="middle"
-        fill="${color}">${text}</text>
-    </svg>
-  `;
+// ── Stop icon ──
+function makeStopIcon(order, isFirst, isLast) {
+  const color = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
+  const label = isFirst ? 'A' : isLast ? 'B' : String(order);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">
+    <circle cx="13" cy="13" r="11"
+      fill="#0a0c10" stroke="${color}" stroke-width="2"/>
+    <text x="13" y="17"
+      font-family="monospace"
+      font-size="${label.length > 1 ? 7 : 9}"
+      font-weight="bold"
+      text-anchor="middle"
+      fill="${color}">${label}</text>
+  </svg>`;
   return L.divIcon({
-    html:       svg,
-    iconSize:   [28, 28],
-    iconAnchor: [14, 14],
-    className:  '',
+    html: svg, iconSize: [26, 26], iconAnchor: [13, 13], className: '',
   });
 }
 
-export default function MapView({
-  displayPos,
-  stops,
-  activeBuses = [],
-  selectedDriverId,
-}) {
-  const mapRef          = useRef(null);
-  const mapInstanceRef  = useRef(null);
-  const busMarkersRef   = useRef({});   // driverId → { marker, lastLat, lastLng }
-  const stopMarkersRef  = useRef([]);
-  const routeLineRef    = useRef(null);
-  const initialFitRef   = useRef(false);
-  const displayPosRef   = useRef(null); // track latest displayPos for selected bus
+export default function MapView({ displayPos, stops, activeBuses = [], selectedDriverId }) {
+  const containerRef    = useRef(null);
+  const mapRef          = useRef(null);       // L.Map instance
+  const busMarkersRef   = useRef({});         // driverId → { marker, bearing }
+  const stopLayerRef    = useRef(null);       // L.LayerGroup for stops
+  const routeLineRef    = useRef(null);       // L.Polyline
+  const hasFittedRef    = useRef(false);      // did we fit to route yet
+  const hasPannedRef    = useRef(false);      // did we pan to first bus pos
 
   // ── Init map once ──
   useEffect(() => {
-    if (mapInstanceRef.current) return;
+    if (mapRef.current) return;
 
-    const map = L.map(mapRef.current, {
-      center:      [10.9152, 78.8537],
+    const map = L.map(containerRef.current, {
       zoom:        15,
+      center:      [20, 78],              // India centre — will be overridden by fitBounds
       zoomControl: true,
     });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
+      attribution: '© OpenStreetMap',
       maxZoom:     19,
     }).addTo(map);
 
-    mapInstanceRef.current = map;
+    stopLayerRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
 
     return () => {
       map.remove();
-      mapInstanceRef.current = null;
+      mapRef.current    = null;
+      busMarkersRef.current = {};
+      hasFittedRef.current  = false;
+      hasPannedRef.current  = false;
     };
   }, []);
 
-  // ── Draw stops + route line ──
+  // ── Draw stops + fit map to route ──
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapRef.current;
     if (!map || !stops?.length) return;
 
-    // Clear old
-    stopMarkersRef.current.forEach((m) => m.remove());
-    stopMarkersRef.current = [];
+    // Clear previous stops
+    stopLayerRef.current?.clearLayers();
     if (routeLineRef.current) {
       routeLineRef.current.remove();
       routeLineRef.current = null;
     }
 
-    const sorted = [...stops].sort((a, b) => a.order - b.order);
+    const sorted  = [...stops].sort((a, b) => a.order - b.order);
     const latlngs = sorted.map((s) => [s.lat, s.lng]);
 
     // Route line
     routeLineRef.current = L.polyline(latlngs, {
-      color:     '#1e2535',
-      weight:    4,
-      opacity:   0.9,
-      dashArray: '10 6',
+      color:     '#1e3a5f',
+      weight:    5,
+      opacity:   1,
+      dashArray: '10 7',
     }).addTo(map);
 
     // Stop markers
     sorted.forEach((stop, i) => {
-      const icon   = createStopIcon(stop.order, i === 0, i === sorted.length - 1);
-      const marker = L.marker([stop.lat, stop.lng], { icon })
-        .addTo(map)
+      const icon = makeStopIcon(stop.order, i === 0, i === sorted.length - 1);
+      L.marker([stop.lat, stop.lng], { icon })
         .bindPopup(`
-          <div style="
-            font-family:monospace;font-size:12px;
+          <div style="font-family:monospace;font-size:12px;
             background:#0f1219;color:#e2e8f0;
-            padding:8px 12px;border-radius:8px;min-width:100px">
+            padding:8px 12px;border-radius:8px;min-width:90px">
             <div style="color:#00e5a0;font-weight:bold;margin-bottom:2px">
               Stop ${stop.order}
             </div>
             <div>${stop.name}</div>
           </div>
-        `, { className: 'dark-popup' });
-      stopMarkersRef.current.push(marker);
+        `, { className: 'dark-popup' })
+        .addTo(stopLayerRef.current);
     });
 
-    // Fit map to route on first load
-    if (!initialFitRef.current && latlngs.length > 1) {
-      map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50] });
-      initialFitRef.current = true;
+    // Fit map to route bounds — always when stops change
+    if (latlngs.length >= 2) {
+      const bounds = L.latLngBounds(latlngs);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+      hasFittedRef.current = true;
+    } else if (latlngs.length === 1) {
+      map.setView(latlngs[0], 15);
+      hasFittedRef.current = true;
     }
+
+    // Reset pan flag so map will follow the bus when it appears
+    hasPannedRef.current = false;
   }, [stops]);
 
-  // ── Update ALL bus markers when activeBuses changes ──
+  // ── Update bus markers when activeBuses changes ──
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapRef.current;
     if (!map) return;
 
     const currentIds = new Set(activeBuses.map((b) => b.driverId));
 
-    // Remove markers for buses that left
-    Object.keys(busMarkersRef.current).forEach((id) => {
+    // Remove gone buses
+    Object.entries(busMarkersRef.current).forEach(([id, data]) => {
       if (!currentIds.has(id)) {
-        busMarkersRef.current[id].marker.remove();
+        data.marker.remove();
         delete busMarkersRef.current[id];
       }
     });
 
-    // Add or update each active bus
+    // Add/update
     activeBuses.forEach((bus) => {
       if (!bus.lat || !bus.lng) return;
 
+      const lat        = Number(bus.lat);
+      const lng        = Number(bus.lng);
       const isSelected = bus.driverId === selectedDriverId;
       const existing   = busMarkersRef.current[bus.driverId];
 
       let deg = 0;
       if (existing) {
-        deg = bearing(
-          existing.lastLat, existing.lastLng,
-          bus.lat,          bus.lng
-        ) || existing.lastBearing || 0;
+        const b = bearing(
+          existing.lastLat, existing.lastLng, lat, lng,
+        );
+        deg = (b !== 0 && !isNaN(b)) ? b : existing.bearing;
       }
 
-      const icon = createBusIcon(deg, bus.vehicleNumber, isSelected);
+      const icon = makeBusIcon(deg, bus.vehicleNumber, isSelected);
 
       if (!existing) {
-        const marker = L.marker([bus.lat, bus.lng], {
+        const marker = L.marker([lat, lng], {
           icon,
-          zIndexOffset: isSelected ? 2000 : 1000,
+          zIndexOffset: isSelected ? 2000 : 500,
         })
           .addTo(map)
           .bindPopup(`
-            <div style="
-              font-family:monospace;font-size:12px;
+            <div style="font-family:monospace;font-size:12px;
               background:#0f1219;color:#e2e8f0;
               padding:8px 12px;border-radius:8px">
               <div style="color:#00e5a0;font-weight:bold">
@@ -221,74 +217,66 @@ export default function MapView({
           `, { className: 'dark-popup' });
 
         busMarkersRef.current[bus.driverId] = {
-          marker,
-          lastLat:     bus.lat,
-          lastLng:     bus.lng,
-          lastBearing: deg,
+          marker, bearing: deg, lastLat: lat, lastLng: lng,
         };
       } else {
-        existing.marker.setLatLng([bus.lat, bus.lng]);
+        existing.marker.setLatLng([lat, lng]);
         existing.marker.setIcon(icon);
-        existing.lastLat     = bus.lat;
-        existing.lastLng     = bus.lng;
-        existing.lastBearing = deg;
+        existing.bearing = deg;
+        existing.lastLat = lat;
+        existing.lastLng = lng;
       }
     });
   }, [activeBuses, selectedDriverId]);
 
-  // ── Smooth interpolated movement for SELECTED bus ──
-  // This runs on every rAF tick via useInterpolator
+  // ── Smooth marker movement via displayPos (rAF-driven) ──
   useEffect(() => {
-    if (!displayPos || !selectedDriverId) return;
+    const map = mapRef.current;
+    if (!map || !displayPos || !selectedDriverId) return;
 
-    const map      = mapInstanceRef.current;
+    const lat      = Number(displayPos.lat);
+    const lng      = Number(displayPos.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+
     const existing = busMarkersRef.current[selectedDriverId];
-    if (!map || !existing) return;
+    if (!existing) return;
 
-    const { lat, lng } = displayPos;
-
-    // Compute bearing from last known position
-    let deg = existing.lastBearing || 0;
+    // Compute bearing
+    let deg = existing.bearing || 0;
     if (existing.lastLat && existing.lastLng) {
       const b = bearing(existing.lastLat, existing.lastLng, lat, lng);
-      if (b !== 0) deg = b;
+      if (!isNaN(b) && b !== 0) deg = b;
     }
 
-    const selectedBus = activeBuses.find((b) => b.driverId === selectedDriverId);
-    const icon = createBusIcon(deg, selectedBus?.vehicleNumber || '', true);
+    const bus  = activeBuses.find((b) => b.driverId === selectedDriverId);
+    const icon = makeBusIcon(deg, bus?.vehicleNumber || '', true);
 
     existing.marker.setLatLng([lat, lng]);
     existing.marker.setIcon(icon);
-    existing.lastBearing = deg;
+    existing.bearing = deg;
 
-    displayPosRef.current = { lat, lng };
-  }, [displayPos, selectedDriverId, activeBuses]);
+    // Pan to bus — first time or when it moves significantly
+    if (!hasPannedRef.current) {
+      map.setView([lat, lng], 16, { animate: true });
+      hasPannedRef.current = true;
+    }
+  }, [displayPos]);                            // intentionally only displayPos
 
-  // ── Pan to selected bus when it first appears ──
+  // ── When user selects a different bus, pan to it ──
   useEffect(() => {
-    if (!displayPos || !selectedDriverId) return;
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    map.panTo([displayPos.lat, displayPos.lng], {
-      animate:  true,
-      duration: 0.8,
-    });
-  }, [
-    // Only pan when selectedDriverId changes or bus first appears
-    selectedDriverId,
-    // Pan when we first get a position (displayPos goes from null to value)
-    displayPos === null ? null : 'has-pos',
-  ]);
+    const map = mapRef.current;
+    if (!map || !selectedDriverId) return;
+
+    const bus = activeBuses.find((b) => b.driverId === selectedDriverId);
+    if (bus?.lat && bus?.lng) {
+      map.setView([Number(bus.lat), Number(bus.lng)], 16, { animate: true });
+    }
+  }, [selectedDriverId]);
 
   return (
     <div
-      ref={mapRef}
-      style={{
-        width:     '100%',
-        height:    '100%',
-        minHeight: '300px',
-        borderRadius: 14,
-      }}
+      ref={containerRef}
+      style={{ width: '100%', height: '100%', borderRadius: 12 }}
     />
   );
 }

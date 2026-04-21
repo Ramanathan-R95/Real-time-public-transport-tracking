@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api            from '../services/api';
 import { useSSE }          from '../hooks/useSSE';
 import { useInterpolator } from '../hooks/useInterpolator';
@@ -6,11 +6,11 @@ import MapView    from '../components/user/MapView';
 import ETAPanel   from '../components/user/ETAPanel';
 import StaleAlert from '../components/user/StaleAlert';
 
-const STATUS_CONFIG = {
-  waiting:             { color: 'var(--text-dim)', label: 'Waiting'    },
-  started:             { color: 'var(--accent)',   label: 'Running'    },
-  ended:               { color: 'var(--danger)',   label: 'Trip ended' },
-  driver_disconnected: { color: 'var(--warning)',  label: 'Signal lost'},
+const STATUS_CFG = {
+  waiting:             { color: 'var(--text-dim)', label: 'Waiting'     },
+  started:             { color: 'var(--accent)',   label: 'Running'     },
+  ended:               { color: 'var(--danger)',   label: 'Trip ended'  },
+  driver_disconnected: { color: 'var(--warning)',  label: 'Signal lost' },
 };
 
 export default function UserPage() {
@@ -18,57 +18,72 @@ export default function UserPage() {
   const [selectedRouteId,  setSelectedRouteId]  = useState('');
   const [selectedRoute,    setSelectedRoute]    = useState(null);
   const [selectedDriverId, setSelectedDriverId] = useState(null);
-  const [mapHeight,        setMapHeight]        = useState('52vh');
+  const [mapH, setMapH] = useState('50vh');
+  const autoSelectedRef = useRef(false);
 
+  // Responsive map height
   useEffect(() => {
-    const update = () => setMapHeight(window.innerWidth < 768 ? '42vh' : '52vh');
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    const fn = () => setMapH(window.innerWidth < 768 ? '40vh' : '50vh');
+    fn();
+    window.addEventListener('resize', fn);
+    return () => window.removeEventListener('resize', fn);
   }, []);
 
+  // Load routes
   useEffect(() => {
     api.get('/routes').then((r) => {
+      if (!r.data?.length) return;
       setRoutes(r.data);
-      if (r.data.length > 0) setSelectedRouteId(r.data[0]._id);
+      setSelectedRouteId(r.data[0]._id);
     }).catch(console.error);
   }, []);
 
+  // Load route detail (stops) when route changes
   useEffect(() => {
     if (!selectedRouteId) return;
+    setSelectedRoute(null);
+    autoSelectedRef.current = false;
+    setSelectedDriverId(null);
     api.get(`/routes/${selectedRouteId}`)
       .then((r) => setSelectedRoute(r.data))
       .catch(console.error);
   }, [selectedRouteId]);
 
+  // SSE — live data
   const { position, tripStatus, eta, connected, activeBuses } = useSSE({
     routeId: selectedRouteId,
   });
 
-  const busesOnRoute = activeBuses.filter((b) => b.routeId === selectedRouteId);
+  // Buses on selected route
+  const busesOnRoute = activeBuses.filter(
+    (b) => b.routeId === selectedRouteId && b.lat && b.lng
+  );
 
-  // Auto-select first bus when buses appear
+  // Auto-select first bus when list changes
   useEffect(() => {
-    if (busesOnRoute.length > 0 && !selectedDriverId) {
+    if (busesOnRoute.length > 0 && !autoSelectedRef.current) {
       setSelectedDriverId(busesOnRoute[0].driverId);
+      autoSelectedRef.current = true;
     }
-    if (busesOnRoute.length === 0) setSelectedDriverId(null);
+    if (busesOnRoute.length === 0) {
+      setSelectedDriverId(null);
+      autoSelectedRef.current = false;
+    }
   }, [busesOnRoute.length]);
 
-  // Get selected bus real-time position from activeBuses (updated on every ping)
+  // Target position for interpolation
   const selectedBus = selectedDriverId
     ? activeBuses.find((b) => b.driverId === selectedDriverId)
     : null;
 
-  // Use selected bus lat/lng as interpolation target
-  const targetPosition = selectedBus?.lat && selectedBus?.lng
+  const targetPosition = (selectedBus?.lat && selectedBus?.lng)
     ? { lat: Number(selectedBus.lat), lng: Number(selectedBus.lng) }
-    : position?.lat
+    : (position?.lat && position?.lng)
     ? { lat: Number(position.lat), lng: Number(position.lng) }
     : null;
 
-  const displayPos = useInterpolator({ targetPosition, intervalMs: 5000 });
-  const statusCfg  = STATUS_CONFIG[tripStatus] || STATUS_CONFIG.waiting;
+  const displayPos  = useInterpolator({ targetPosition, intervalMs: 8000 });
+  const statusCfg   = STATUS_CFG[tripStatus] || STATUS_CFG.waiting;
   const sortedStops = selectedRoute?.stops
     ? [...selectedRoute.stops].sort((a, b) => a.order - b.order)
     : [];
@@ -83,54 +98,55 @@ export default function UserPage() {
       overflow:      'hidden',
     }}>
 
-      {/* Top bar */}
+      {/* ── Top bar ── */}
       <div style={{
-        padding:        '10px 16px',
+        padding:        '9px 14px',
         background:     'var(--surface)',
         borderBottom:   '1px solid var(--border)',
         display:        'flex',
         alignItems:     'center',
-        justifyContent: 'space-between',
+        gap:            10,
         flexShrink:     0,
-        gap:            12,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          <label style={{
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-dim)', letterSpacing: 1, whiteSpace: 'nowrap', flexShrink: 0,
-          }}>
-            ROUTE
-          </label>
-          <select
-            value={selectedRouteId}
-            onChange={(e) => { setSelectedRouteId(e.target.value); setSelectedDriverId(null); }}
-            style={{
-              flex: 1, minWidth: 0,
-              padding: '7px 10px',
-              background: 'var(--surface2)',
-              border: '1px solid var(--border)',
-              borderRadius: 8, color: 'var(--text)',
-              fontSize: 13, fontFamily: 'var(--font-body)',
-              appearance: 'none',
-            }}
-          >
-            {routes.map((r) => (
-              <option key={r._id} value={r._id}>
-                {r.routeNumber} — {r.routeName}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Route selector */}
+        <span style={{
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          color: 'var(--text-dim)', letterSpacing: 1, flexShrink: 0,
+        }}>
+          ROUTE
+        </span>
+        <select
+          value={selectedRouteId}
+          onChange={(e) => setSelectedRouteId(e.target.value)}
+          style={{
+            flex: 1, minWidth: 0,
+            padding: '7px 10px',
+            background: 'var(--surface2)',
+            border: '1px solid var(--border)',
+            borderRadius: 8, color: 'var(--text)',
+            fontSize: 13, appearance: 'none',
+          }}
+        >
+          {routes.map((r) => (
+            <option key={r._id} value={r._id}>
+              {r.routeNumber} — {r.routeName}
+            </option>
+          ))}
+        </select>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          <span style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: connected ? 'var(--accent)' : 'var(--danger)',
-            animation: connected ? 'pulse 2s infinite' : 'none',
+        {/* Connection status */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+        }}>
+          <div style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: connected ? '#00e5a0' : '#ff4d4d',
+            animation:  connected ? 'pulse 2s infinite' : 'none',
+            flexShrink: 0,
           }} />
           <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 11,
-            color: connected ? 'var(--accent)' : 'var(--danger)',
+            fontFamily: 'var(--font-mono)', fontSize: 10,
+            color: connected ? '#00e5a0' : '#ff4d4d',
             letterSpacing: 1,
           }}>
             {connected ? 'LIVE' : 'OFFLINE'}
@@ -138,14 +154,14 @@ export default function UserPage() {
         </div>
       </div>
 
-      {/* Bus selector */}
+      {/* ── Bus selector ── */}
       {busesOnRoute.length > 0 && (
         <div style={{
-          padding: '8px 16px',
-          background: 'var(--surface)',
+          padding:      '7px 14px',
+          background:   'var(--surface)',
           borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center',
-          gap: 10, flexShrink: 0, overflowX: 'auto',
+          display:      'flex', alignItems: 'center',
+          gap:          8, flexShrink: 0, overflowX: 'auto',
         }}>
           <span style={{
             fontSize: 10, fontFamily: 'var(--font-mono)',
@@ -153,7 +169,6 @@ export default function UserPage() {
           }}>
             BUS
           </span>
-
           {busesOnRoute.map((bus) => {
             const sel = bus.driverId === selectedDriverId;
             return (
@@ -161,17 +176,25 @@ export default function UserPage() {
                 key={bus.driverId}
                 onClick={() => setSelectedDriverId(bus.driverId)}
                 style={{
-                  padding: '5px 14px', borderRadius: 20,
-                  border: `1.5px solid ${sel ? 'var(--accent)' : 'var(--border2)'}`,
+                  padding:    '5px 14px', borderRadius: 20,
+                  border:     `1.5px solid ${sel ? '#00e5a0' : 'var(--border2)'}`,
                   background: sel ? 'rgba(0,229,160,0.1)' : 'var(--surface2)',
-                  color: sel ? 'var(--accent)' : 'var(--text-dim)',
+                  color:      sel ? '#00e5a0' : 'var(--text-dim)',
                   fontFamily: 'var(--font-mono)', fontSize: 12,
                   whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer',
-                  transition: 'all 0.2s',
+                  transition: 'all 0.15s',
+                  display:    'flex', alignItems: 'center', gap: 6,
                 }}
               >
+                {/* Live dot */}
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: '#00e5a0',
+                  animation: 'pulse 1.5s infinite',
+                  flexShrink: 0,
+                }} />
                 {bus.vehicleNumber}
-                <span style={{ marginLeft: 6, opacity: 0.55, fontSize: 10 }}>
+                <span style={{ opacity: 0.55, fontSize: 10 }}>
                   {bus.driverName}
                 </span>
               </button>
@@ -179,10 +202,9 @@ export default function UserPage() {
           })}
 
           <div style={{
-            marginLeft: 'auto',
-            padding: '4px 10px', borderRadius: 20,
-            border: `1px solid ${statusCfg.color}`,
-            color: statusCfg.color, fontSize: 10,
+            marginLeft: 'auto', padding: '4px 10px', borderRadius: 20,
+            border:     `1px solid ${statusCfg.color}`,
+            color:      statusCfg.color, fontSize: 10,
             fontFamily: 'var(--font-mono)', letterSpacing: 1,
             whiteSpace: 'nowrap', flexShrink: 0,
           }}>
@@ -191,8 +213,8 @@ export default function UserPage() {
         </div>
       )}
 
-      {/* Map */}
-      <div style={{ height: mapHeight, flexShrink: 0, padding: '10px 12px 6px' }}>
+      {/* ── Map ── */}
+      <div style={{ height: mapH, flexShrink: 0, padding: '8px 12px 4px' }}>
         <MapView
           displayPos={displayPos}
           stops={sortedStops}
@@ -201,32 +223,50 @@ export default function UserPage() {
         />
       </div>
 
-      {/* Bottom panel */}
+      {/* ── Bottom scrollable panel ── */}
       <div style={{
         flex: 1, overflowY: 'auto', overflowX: 'hidden',
-        padding: '6px 12px 24px',
+        padding: '6px 12px 28px',
         display: 'flex', flexDirection: 'column', gap: 10,
         WebkitOverflowScrolling: 'touch',
       }}>
+
         {selectedBus?.timestamp && (
           <StaleAlert lastTimestamp={selectedBus.timestamp} />
         )}
 
+        {/* No active bus */}
         {busesOnRoute.length === 0 && (
           <div style={{
             background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 12, padding: '24px 20px', textAlign: 'center',
+            borderRadius: 12, padding: '28px 20px', textAlign: 'center',
           }}>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%',
+              background: 'var(--surface2)',
+              border: '1px solid var(--border2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 14px',
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                stroke="var(--text-dim)" strokeWidth="1.5">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+            </div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>
               No active bus on this route
             </div>
             <div style={{ color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.6 }}>
-              Map updates automatically when a driver starts a trip.
+              Ask the driver to start a trip from the driver portal.
+              <br />
+              The map will update automatically.
             </div>
           </div>
         )}
 
-        {selectedDriverId && (
+        {/* ETA panel */}
+        {selectedDriverId && displayPos && (
           <ETAPanel
             eta={eta}
             stops={sortedStops}
@@ -258,7 +298,7 @@ export default function UserPage() {
 
         <div style={{ textAlign: 'center', paddingTop: 4 }}>
           <a href="/login" style={{
-            color: 'var(--text-faint)', fontSize: 12,
+            color: 'var(--text-faint)', fontSize: 11,
             fontFamily: 'var(--font-mono)', letterSpacing: 1,
           }}>
             DRIVER LOGIN →
