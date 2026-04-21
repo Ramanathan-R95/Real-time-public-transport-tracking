@@ -70,6 +70,44 @@ app.get('/health', (req, res) => {
     env:    process.env.NODE_ENV || 'development',
   });
 });
+// DEBUG — remove after fixing
+app.get('/debug/state', async (req, res) => {
+  try {
+    const redisService = require('./services/redisService');
+    const TripLog      = require('./models/TripLog');
+    const Driver       = require('./models/Driver');
+
+    const buses    = await redisService.getAllActiveBuses();
+    const drivers  = await Driver.find().select('name email vehicleNumber isActive');
+    const trips    = await TripLog.find({ status: 'active' }).populate('driver route');
+
+    res.json({
+      activeBuses_in_redis: buses,
+      active_trips_in_mongo: trips.map(t => ({
+        id:        t._id,
+        driver:    t.driver?.name,
+        route:     t.route?.routeNumber,
+        pingCount: t.pings?.length,
+        status:    t.status,
+      })),
+      all_drivers: drivers,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+app.get('/debug/redis-raw', async (req, res) => {
+  try {
+    const { getClient } = require('./config/redis');
+    const r = getClient();
+    const buses = await r.hgetall('active_buses');
+    res.json({ raw_active_buses: buses });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
 
 // 404
 app.use((req, res) => {
