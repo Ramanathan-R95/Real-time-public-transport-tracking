@@ -3,12 +3,11 @@ const express  = require('express');
 const http     = require('http');
 const cors     = require('cors');
 
-const connectDB          = require('./config/db');
-const { connectRedis }   = require('./config/redis');
-const { initWSServer }   = require('./services/wsService');
-const { initSSEService } = require('./services/sseService');
+const connectDB        = require('./config/db');
+const { connectRedis } = require('./config/redis');
+const { initWSServer } = require('./services/wsService');
+const redisService     = require('./services/redisService');
 
-// Register all Mongoose models
 require('./models/Driver');
 require('./models/Route');
 require('./models/TripLog');
@@ -24,7 +23,6 @@ const adminRoutes  = require('./routes/adminRoutes');
 const app    = express();
 const server = http.createServer(app);
 
-// CORS — allow Vercel frontend + local dev
 const allowedOrigins = [
   process.env.CLIENT_ORIGIN,
   'http://localhost:5173',
@@ -33,88 +31,133 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS blocked: ${origin}`));
+    if (allowedOrigins.some(o => origin.startsWith(o.replace(/\/$/, '')))) return cb(null, true);
+    console.warn('[CORS] Blocked:', origin);
+    return cb(null, true); // allow all during debug — tighten after
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
 }));
-
+app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
-// Temporary debug — remove after fixing
 
-app.use(express.urlencoded({ extended: true }));
+// ── SSE endpoint — registered DIRECTLY here, not in a service ──
+app.get('/sse/route/:routeId', (req, res) => {
+  const { routeId } = req.params;
+  console.log(`[SSE] Client connected for route: ${routeId}`);
 
-// Security headers
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  next();
+  res.set({
+    'Content-Type':      'text/event-stream',
+    'Cache-Control':     'no-cache',
+    'Connection':        'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  // Send current bus state immediately
+  redisService.getAllActiveBuses().then((buses) => {
+    console.log(`[SSE] Sending initial buses to client:`, buses);
+    write(res, 'buses_update', buses);
+  }).catch(console.error);
+
+  redisService.getVehicleState(routeId).then((state) => {
+    if (state?.lat) {
+      console.log(`[SSE] Sending initial position:`, state);
+      write(res, 'position', state);
+    }
+  }).catch(console.error);
+
+  // Register client
+  addClient(routeId, res);
+
+  // Heartbeat every 20s
+  const hb = setInterval(() => {
+    try { write(res, 'ping', { t: Date.now() }); }
+    catch { clearInterval(hb); }
+  }, 20000);
+
+  req.on('close', () => {
+    console.log(`[SSE] Client disconnected for route: ${routeId}`);
+    clearInterval(hb);
+    removeClient(routeId, res);
+  });
 });
 
-// Routes
+// ── SSE client registry ──
+const sseClients = new Map(); // routeId → Set<res>
+
+function addClient(routeId, res) {
+  if (!sseClients.has(routeId))     sseClients.set(routeId,    new Set());
+  if (!sseClients.has('__all__'))   sseClients.set('__all__',  new Set());
+  sseClients.get(routeId).add(res);
+  sseClients.get('__all__').add(res);
+}
+
+function removeClient(routeId, res) {
+  sseClients.get(routeId)?.delete(res);
+  sseClients.get('__all__')?.delete(res);
+}
+
+function write(res, event, data) {
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch (e) {
+    console.error('[SSE] Write error:', e.message);
+  }
+}
+
+// Export broadcast so wsService can use it
+function broadcast(channelId, event, data) {
+  const subs = sseClients.get(channelId);
+  if (!subs || subs.size === 0) return;
+  console.log(`[SSE] Broadcasting '${event}' to ${subs.size} clients on channel '${channelId}'`);
+  subs.forEach((res) => write(res, event, data));
+}
+
+// Make broadcast available globally
+global.sseBroadcast = broadcast;
+
+// ── REST routes ──
 app.use('/api/auth',    authRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/routes',  routeRoutes);
 app.use('/api/eta',     etaRoutes);
 app.use('/api/admin',   adminRoutes);
 
-// Health check — Render pings this to keep the service alive
+// ── Health + debug ──
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    time:   new Date().toISOString(),
-    env:    process.env.NODE_ENV || 'development',
-  });
+  res.json({ status: 'ok', time: new Date().toISOString() });
 });
-// DEBUG — remove after fixing
+
 app.get('/debug/state', async (req, res) => {
   try {
-    const redisService = require('./services/redisService');
-    const TripLog      = require('./models/TripLog');
-    const Driver       = require('./models/Driver');
-
-    const buses    = await redisService.getAllActiveBuses();
-    const drivers  = await Driver.find().select('name email vehicleNumber isActive');
-    const trips    = await TripLog.find({ status: 'active' }).populate('driver route');
-
+    const TripLog = require('./models/TripLog');
+    const Driver  = require('./models/Driver');
+    const buses   = await redisService.getAllActiveBuses();
+    const trips   = await TripLog.find({ status: 'active' }).populate('driver route');
+    const drivers = await Driver.find().select('name email vehicleNumber');
     res.json({
-      activeBuses_in_redis: buses,
+      activeBuses_in_redis:  buses,
       active_trips_in_mongo: trips.map(t => ({
-        id:        t._id,
-        driver:    t.driver?.name,
-        route:     t.route?.routeNumber,
-        pingCount: t.pings?.length,
-        status:    t.status,
+        id: t._id, driver: t.driver?.name,
+        route: t.route?.routeNumber, pingCount: t.pings?.length,
       })),
       all_drivers: drivers,
-      timestamp: new Date().toISOString(),
+      sse_channels: [...sseClients.entries()].map(([k,v]) => ({ channel: k, clients: v.size })),
     });
   } catch (err) {
     res.json({ error: err.message });
   }
 });
 
-app.get('/debug/redis-raw', async (req, res) => {
-  try {
-    const { getClient } = require('./config/redis');
-    const r = getClient();
-    const buses = await r.hgetall('active_buses');
-    res.json({ raw_active_buses: buses });
-  } catch (err) {
-    res.json({ error: err.message });
-  }
-});
-
-// 404
+// ── 404 handler ──
 app.use((req, res) => {
+  console.log('[404]', req.method, req.path);
   res.status(404).json({ message: `Cannot ${req.method} ${req.path}` });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error('[Error]', err.message);
   res.status(500).json({ message: 'Internal server error' });
@@ -123,20 +166,26 @@ app.use((err, req, res, next) => {
 async function start() {
   await connectDB();
   await connectRedis();
-  const redisService = require('./services/redisService');
   await redisService.clearActiveBuses();
 
+  // WS server uses global broadcast
   initWSServer(server);
-  initSSEService(app);
 
   const PORT = parseInt(process.env.PORT) || 5000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\nCampusTrack running on port ${PORT}`);
-    console.log(`  Health: http://localhost:${PORT}/health\n`);
+    console.log(`  SSE test: http://localhost:${PORT}/sse/route/test\n`);
   });
+
+  // Keep Render awake
+  if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_HOSTNAME) {
+    setInterval(async () => {
+      try {
+        const axios = require('axios');
+        await axios.get(`https://${process.env.RENDER_EXTERNAL_HOSTNAME}/health`);
+      } catch {}
+    }, 14 * 60 * 1000);
+  }
 }
 
-start().catch((err) => {
-  console.error('Startup failed:', err);
-  process.exit(1);
-});
+start().catch(err => { console.error('Startup failed:', err); process.exit(1); });
