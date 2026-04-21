@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
-import { useWebSocket }     from '../hooks/useWebSocket';
-import { useGeolocation }   from '../hooks/useGeolocation';
+import { useWebSocket }      from '../hooks/useWebSocket';
+import { useGeolocation }    from '../hooks/useGeolocation';
 import { useNetworkQuality } from '../hooks/useNetworkQuality';
 import { bufferPing, getAllBuffered } from '../services/idbBuffer';
-import { encodePosition, resetEncoder } from '../services/deltaEncoder';
-import TripControls  from '../components/driver/TripControls';
-import SignalBadge   from '../components/driver/SignalBadge';
-import BufferStatus  from '../components/driver/BufferStatus';
+import { resetEncoder } from '../services/deltaEncoder';
+import TripControls from '../components/driver/TripControls';
+import SignalBadge  from '../components/driver/SignalBadge';
+import BufferStatus from '../components/driver/BufferStatus';
 
 export default function DriverPage() {
   const navigate = useNavigate();
@@ -26,8 +26,18 @@ export default function DriverPage() {
   const [hasRoute,      setHasRoute]      = useState(null);
   const [myRoute,       setMyRoute]       = useState(null);
 
-  const quality      = useNetworkQuality();
-  const lastSentTime = useRef(0);   // 0 = never sent → first ping goes immediately
+  const quality = useNetworkQuality();
+
+  // ── Refs for stable callbacks ──
+  const lastSentTimeRef = useRef(0);
+  const tripActiveRef   = useRef(false);
+  const wsStatusRef     = useRef('disconnected');
+  const sendRef         = useRef(null);
+  const qualityRef      = useRef({ interval: 5000 });
+
+  // Keep refs in sync with state
+  useEffect(() => { tripActiveRef.current = tripActive;  }, [tripActive]);
+  useEffect(() => { qualityRef.current    = quality;     }, [quality]);
 
   // Check if driver has route
   useEffect(() => {
@@ -63,42 +73,46 @@ export default function DriverPage() {
     onMessage: (msg) => {
       console.log('[Driver] WS message:', msg);
       if (msg.type === 'trip_started') setTripId(msg.tripId);
-      if (msg.type === 'trip_ended')   { setTripActive(false); setTripId(null); }
+      if (msg.type === 'trip_ended') { setTripActive(false); setTripId(null); }
       setWsMessages((p) => [msg, ...p].slice(0, 8));
     },
   });
 
-  // Called on every GPS fix
+  // Sync wsStatus and send to refs
+  useEffect(() => { wsStatusRef.current = wsStatus; }, [wsStatus]);
+  useEffect(() => { sendRef.current     = send;     }, [send]);
+
+  // ── Stable GPS handler using only refs ──
   const handlePosition = useCallback(async (ping) => {
-    if (!tripActive) return;
+    if (!tripActiveRef.current) return;
 
-    const now = Date.now();
+    const now      = Date.now();
+    const interval = lastSentTimeRef.current === 0
+      ? 0
+      : qualityRef.current.interval;
 
-    // First ping always goes — reset lastSentTime only when trip starts
-    const minInterval = lastSentTime.current === 0 ? 0 : quality.interval;
+    if (now - lastSentTimeRef.current < interval) return;
+    lastSentTimeRef.current = now;
 
-    if (now - lastSentTime.current < minInterval) return;
-    lastSentTime.current = now;
+    console.log(`[Driver] Sending ping lat=${ping.lat} lng=${ping.lng} ws=${wsStatusRef.current}`);
 
-    console.log(`[Driver] Sending ping: lat=${ping.lat} lng=${ping.lng} ws=${wsStatus}`);
-
-    if (wsStatus === 'connected') {
-      send({
+    if (wsStatusRef.current === 'connected') {
+      sendRef.current?.({
         type:      'ping',
         lat:       ping.lat,
         lng:       ping.lng,
         accuracy:  ping.accuracy,
-        speed:     ping.speed,
+        speed:     ping.speed || 0,
         timestamp: ping.timestamp,
       });
     } else {
       await bufferPing(ping);
-      console.log('[Driver] WS offline — buffered ping');
+      console.log('[Driver] Buffered ping (WS offline)');
     }
 
     setPingCount((c) => c + 1);
     setLastPingTime(new Date().toLocaleTimeString());
-  }, [tripActive, wsStatus, quality.interval, send]);
+  }, []); // stable — reads everything from refs
 
   const { lastPos, error: geoError } = useGeolocation({
     enabled:    tripActive,
@@ -109,17 +123,17 @@ export default function DriverPage() {
     if (!selectedRoute) return;
     console.log('[Driver] Starting trip on route:', selectedRoute);
     resetEncoder();
-    lastSentTime.current = 0;  // reset so first ping fires immediately
-    send({ type: 'trip_start', routeId: selectedRoute });
+    lastSentTimeRef.current = 0; // ← correct ref: first ping fires immediately
+    sendRef.current?.({ type: 'trip_start', routeId: selectedRoute });
     setTripActive(true);
     setPingCount(0);
   }
 
   function handleEndTrip() {
-    send({ type: 'trip_end' });
+    sendRef.current?.({ type: 'trip_end' });
     setTripActive(false);
     resetEncoder();
-    lastSentTime.current = 0;
+    lastSentTimeRef.current = 0; // ← correct ref
   }
 
   function handleLogout() {
@@ -127,9 +141,9 @@ export default function DriverPage() {
     navigate('/login');
   }
 
-  const wsColor = wsStatus === 'connected' ? 'var(--accent)'
-    : wsStatus === 'reconnecting'           ? 'var(--warning)'
-    : 'var(--danger)';
+  const wsColor = wsStatus === 'connected'    ? 'var(--accent)'
+    :             wsStatus === 'reconnecting' ? 'var(--warning)'
+    :                                           'var(--danger)';
 
   if (hasRoute === null) {
     return (
@@ -167,26 +181,32 @@ export default function DriverPage() {
             <div style={{ fontWeight: 600, fontSize: 18 }}>
               {driver.name || 'Driver'}
             </div>
-            <div style={{
-              fontSize: 12, color: 'var(--text-dim)',
-              fontFamily: 'var(--font-mono)',
-            }}>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
               {driver.vehicleNumber}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => navigate('/driver/history')}
-              style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+            <button onClick={() => navigate('/driver/history')} style={{
+              padding: '8px 14px', background: 'transparent',
+              border: '1px solid var(--border)', borderRadius: 8,
+              color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer',
+            }}>
               History
             </button>
             {hasRoute && (
-              <button onClick={() => navigate('/driver/route-setup')}
-                style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+              <button onClick={() => navigate('/driver/route-setup')} style={{
+                padding: '8px 14px', background: 'transparent',
+                border: '1px solid var(--border)', borderRadius: 8,
+                color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer',
+              }}>
                 Edit Route
               </button>
             )}
-            <button onClick={handleLogout}
-              style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+            <button onClick={handleLogout} style={{
+              padding: '8px 14px', background: 'transparent',
+              border: '1px solid var(--border)', borderRadius: 8,
+              color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer',
+            }}>
               Logout
             </button>
           </div>
@@ -212,20 +232,15 @@ export default function DriverPage() {
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
               No route assigned yet
             </div>
-            <div style={{
-              fontSize: 13, color: 'var(--text-dim)',
-              lineHeight: 1.6, marginBottom: 24,
-            }}>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 24 }}>
               Set up your route once — students will use it to track you live.
             </div>
-            <button onClick={() => navigate('/driver/route-setup')}
-              style={{
-                padding: '13px 28px', background: 'var(--accent)',
-                color: '#080a0f', borderRadius: 10,
-                fontWeight: 700, fontSize: 14,
-                fontFamily: 'var(--font-mono)', letterSpacing: 1,
-                border: 'none', cursor: 'pointer',
-              }}>
+            <button onClick={() => navigate('/driver/route-setup')} style={{
+              padding: '13px 28px', background: 'var(--accent)',
+              color: '#080a0f', borderRadius: 10, fontWeight: 700,
+              fontSize: 14, fontFamily: 'var(--font-mono)',
+              letterSpacing: 1, border: 'none', cursor: 'pointer',
+            }}>
               SETUP MY ROUTE
             </button>
           </div>
@@ -254,10 +269,7 @@ export default function DriverPage() {
                   {myRoute?.routeNumber} — {myRoute?.routeName}
                 </div>
               </div>
-              <div style={{
-                fontFamily: 'var(--font-mono)', fontSize: 11,
-                color: 'var(--text-dim)',
-              }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
                 {myRoute?.stops?.length} stops
               </div>
             </div>
@@ -294,9 +306,9 @@ export default function DriverPage() {
             {geoError && (
               <div style={{
                 background: '#1a0a0a', border: '1px solid var(--danger)',
-                borderRadius: 8, padding: '10px 14px',
-                fontSize: 13, color: 'var(--danger)',
-                marginBottom: 12, fontFamily: 'var(--font-mono)',
+                borderRadius: 8, padding: '10px 14px', fontSize: 13,
+                color: 'var(--danger)', marginBottom: 12,
+                fontFamily: 'var(--font-mono)',
               }}>
                 GPS Error: {geoError}
               </div>
@@ -330,15 +342,12 @@ export default function DriverPage() {
                 }}>
                   LIVE STATS
                 </div>
-                <div style={{
-                  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16,
-                }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   {[
-                    { label: 'PINGS SENT',  value: pingCount },
-                    { label: 'INTERVAL',    value: `${quality.interval / 1000}s` },
-                    { label: 'LAST PING',   value: lastPingTime || '—' },
-                    { label: 'ACCURACY',
-                      value: lastPos ? `${Math.round(lastPos.accuracy)}m` : '—' },
+                    { label: 'PINGS SENT', value: pingCount },
+                    { label: 'INTERVAL',   value: `${quality.interval / 1000}s` },
+                    { label: 'LAST PING',  value: lastPingTime || '—' },
+                    { label: 'ACCURACY',   value: lastPos ? `${Math.round(lastPos.accuracy)}m` : '—' },
                   ].map(({ label, value }) => (
                     <div key={label}>
                       <div style={{
@@ -385,12 +394,11 @@ export default function DriverPage() {
                   <div key={i} style={{
                     fontFamily: 'var(--font-mono)', fontSize: 11,
                     color: 'var(--text-dim)', padding: '4px 0',
-                    borderBottom: i < wsMessages.length - 1
-                      ? '1px solid var(--border)' : 'none',
+                    borderBottom: i < wsMessages.length - 1 ? '1px solid var(--border)' : 'none',
                   }}>
                     <span style={{ color: 'var(--accent)' }}>{m.type}</span>
-                    {m.tripId && ` → ${m.tripId.slice(-6)}`}
-                    {m.count  !== undefined && ` (${m.count} pings)`}
+                    {m.tripId    && ` → ${m.tripId.slice(-6)}`}
+                    {m.count     !== undefined && ` (${m.count} pings)`}
                     {m.timestamp && ` @ ${new Date(m.timestamp).toLocaleTimeString()}`}
                   </div>
                 ))}
