@@ -25,7 +25,7 @@ export default function Navbar() {
  const links = [
     { label: 'Home',     path: '/' },
     { label: 'Track',    path: '/track' },
-    { label: 'About',    path: '/about' },
+    // { label: 'About',    path: '/about' },
     { label: 'Driver',   path: isDriver ? '/driver'  : '/login' },
     { label: 'Admin',    path: isAdmin  ? '/admin'   : '/admin/login' },
   ];
