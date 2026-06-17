@@ -15,6 +15,7 @@ export function useWebSocket({ token, onMessage }) {
 
     ws.current = new WebSocket(`${WS_URL}?token=${token}`);
 
+    // In useWebSocket.js onopen:
     ws.current.onopen = async () => {
       setStatus('connected');
       try {

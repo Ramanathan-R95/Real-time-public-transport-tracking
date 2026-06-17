@@ -60,13 +60,13 @@ export default function DriverPage() {
   }, []);
 
   // Poll buffer count
-  useEffect(() => {
-    const iv = setInterval(async () => {
-      const b = await getAllBuffered();
-      setBufferCount(b.length);
-    }, 3000);
-    return () => clearInterval(iv);
-  }, []);
+  // useEffect(() => {
+  //   const iv = setInterval(async () => {
+  //     const b = await getAllBuffered();
+  //     setBufferCount(b.length);
+  //   }, 3000);
+  //   return () => clearInterval(iv);
+  // }, []);
 
   const { status: wsStatus, send } = useWebSocket({
     token,
@@ -84,35 +84,37 @@ export default function DriverPage() {
 
   // ── Stable GPS handler using only refs ──
   const handlePosition = useCallback(async (ping) => {
-    if (!tripActiveRef.current) return;
+  if (!tripActiveRef.current) return;
 
-    const now      = Date.now();
-    const interval = lastSentTimeRef.current === 0
-      ? 0
-      : qualityRef.current.interval;
+  const now = Date.now();
 
-    if (now - lastSentTimeRef.current < interval) return;
-    lastSentTimeRef.current = now;
+  // First ping: send immediately (lastSentTimeRef starts at 0)
+  // Subsequent pings: respect quality interval
+  const minInterval = lastSentTimeRef.current === 0
+    ? 0
+    : Math.min(qualityRef.current.interval, 4000); // cap at 4s max
 
-    console.log(`[Driver] Sending ping lat=${ping.lat} lng=${ping.lng} ws=${wsStatusRef.current}`);
+  if (now - lastSentTimeRef.current < minInterval) return;
+  lastSentTimeRef.current = now;
 
-    if (wsStatusRef.current === 'connected') {
-      sendRef.current?.({
-        type:      'ping',
-        lat:       ping.lat,
-        lng:       ping.lng,
-        accuracy:  ping.accuracy,
-        speed:     ping.speed || 0,
-        timestamp: ping.timestamp,
-      });
-    } else {
-      await bufferPing(ping);
-      console.log('[Driver] Buffered ping (WS offline)');
-    }
+  if (wsStatusRef.current === 'connected') {
+    sendRef.current?.({
+      type:      'ping',
+      lat:       ping.lat,
+      lng:       ping.lng,
+      accuracy:  ping.accuracy,
+      speed:     ping.speed || 0,
+      timestamp: ping.timestamp,
+    });
+  } else {
+    await bufferPing(ping);
+    const b = await getAllBuffered();
+    setBufferCount(b.length);
+  }
 
-    setPingCount((c) => c + 1);
-    setLastPingTime(new Date().toLocaleTimeString());
-  }, []); // stable — reads everything from refs
+  setPingCount((c) => c + 1);
+  setLastPingTime(new Date().toLocaleTimeString());
+}, []); // stable — reads everything from refs
 
   const { lastPos, error: geoError } = useGeolocation({
     enabled:    tripActive,

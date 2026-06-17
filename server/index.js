@@ -33,8 +33,7 @@ app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (allowedOrigins.some(o => origin.startsWith(o.replace(/\/$/, '')))) return cb(null, true);
-    console.warn('[CORS] Blocked:', origin);
-    return cb(null, true); // allow all during debug — tighten after
+    return cb(null, true);
   },
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
@@ -43,54 +42,37 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
 
-// ── SSE endpoint — registered DIRECTLY here, not in a service ──
-app.get('/sse/route/:routeId', (req, res) => {
-  const { routeId } = req.params;
-  console.log(`[SSE] Client connected for route: ${routeId}`);
+// ── In-memory bus cache — avoids Redis hgetall on every ping ──
+let busCacheMemory = [];
+let busCacheDirty  = true;
 
-  res.set({
-    'Content-Type':      'text/event-stream',
-    'Cache-Control':     'no-cache',
-    'Connection':        'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.flushHeaders();
+function setBusCache(buses) {
+  busCacheMemory = buses;
+  busCacheDirty  = false;
+}
 
-  // Send current bus state immediately
-  redisService.getAllActiveBuses().then((buses) => {
-    console.log(`[SSE] Sending initial buses to client:`, buses);
-    write(res, 'buses_update', buses);
-  }).catch(console.error);
+function invalidateBusCache() {
+  busCacheDirty = true;
+}
 
-  redisService.getVehicleState(routeId).then((state) => {
-    if (state?.lat) {
-      console.log(`[SSE] Sending initial position:`, state);
-      write(res, 'position', state);
-    }
-  }).catch(console.error);
+async function getBuses() {
+  if (busCacheDirty) {
+    busCacheMemory = await redisService.getAllActiveBuses();
+    busCacheDirty  = false;
+  }
+  return busCacheMemory;
+}
 
-  // Register client
-  addClient(routeId, res);
-
-  // Heartbeat every 20s
-  const hb = setInterval(() => {
-    try { write(res, 'ping', { t: Date.now() }); }
-    catch { clearInterval(hb); }
-  }, 20000);
-
-  req.on('close', () => {
-    console.log(`[SSE] Client disconnected for route: ${routeId}`);
-    clearInterval(hb);
-    removeClient(routeId, res);
-  });
-});
+global.setBusCache      = setBusCache;
+global.invalidateBusCache = invalidateBusCache;
+global.getBuses         = getBuses;
 
 // ── SSE client registry ──
-const sseClients = new Map(); // routeId → Set<res>
+const sseClients = new Map();
 
 function addClient(routeId, res) {
-  if (!sseClients.has(routeId))     sseClients.set(routeId,    new Set());
-  if (!sseClients.has('__all__'))   sseClients.set('__all__',  new Set());
+  if (!sseClients.has(routeId))   sseClients.set(routeId,   new Set());
+  if (!sseClients.has('__all__')) sseClients.set('__all__',  new Set());
   sseClients.get(routeId).add(res);
   sseClients.get('__all__').add(res);
 }
@@ -101,23 +83,52 @@ function removeClient(routeId, res) {
 }
 
 function write(res, event, data) {
-  try {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  } catch (e) {
-    console.error('[SSE] Write error:', e.message);
-  }
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+  catch (e) { console.error('[SSE] Write error:', e.message); }
 }
 
-// Export broadcast so wsService can use it
 function broadcast(channelId, event, data) {
   const subs = sseClients.get(channelId);
   if (!subs || subs.size === 0) return;
-  console.log(`[SSE] Broadcasting '${event}' to ${subs.size} clients on channel '${channelId}'`);
   subs.forEach((res) => write(res, event, data));
 }
 
-// Make broadcast available globally
 global.sseBroadcast = broadcast;
+
+// ── SSE endpoint ──
+app.get('/sse/route/:routeId', async (req, res) => {
+  const { routeId } = req.params;
+  console.log(`[SSE] Client connected: route=${routeId}`);
+
+  res.set({
+    'Content-Type':      'text/event-stream',
+    'Cache-Control':     'no-cache',
+    'Connection':        'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  // Send current state from memory cache — no Redis call
+  const buses = await getBuses();
+  write(res, 'buses_update', buses);
+
+  const state = await redisService.getVehicleState(routeId);
+  if (state?.lat) write(res, 'position', state);
+
+  addClient(routeId, res);
+
+  // Heartbeat every 45s — enough to keep connection alive, fewer requests
+  const hb = setInterval(() => {
+    try { write(res, 'ping', { t: Date.now() }); }
+    catch { clearInterval(hb); }
+  }, 45000);
+
+  req.on('close', () => {
+    console.log(`[SSE] Client disconnected: route=${routeId}`);
+    clearInterval(hb);
+    removeClient(routeId, res);
+  });
+});
 
 // ── REST routes ──
 app.use('/api/auth',    authRoutes);
@@ -126,7 +137,6 @@ app.use('/api/routes',  routeRoutes);
 app.use('/api/eta',     etaRoutes);
 app.use('/api/admin',   adminRoutes);
 
-// ── Health + debug ──
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
@@ -135,7 +145,7 @@ app.get('/debug/state', async (req, res) => {
   try {
     const TripLog = require('./models/TripLog');
     const Driver  = require('./models/Driver');
-    const buses   = await redisService.getAllActiveBuses();
+    const buses   = await getBuses();
     const trips   = await TripLog.find({ status: 'active' }).populate('driver route');
     const drivers = await Driver.find().select('name email vehicleNumber');
     res.json({
@@ -145,19 +155,14 @@ app.get('/debug/state', async (req, res) => {
         route: t.route?.routeNumber, pingCount: t.pings?.length,
       })),
       all_drivers: drivers,
-      sse_channels: [...sseClients.entries()].map(([k,v]) => ({ channel: k, clients: v.size })),
+      sse_channels: [...sseClients.entries()].map(([k, v]) => ({ channel: k, clients: v.size })),
     });
   } catch (err) {
     res.json({ error: err.message });
   }
 });
 
-// ── 404 handler ──
-app.use((req, res) => {
-  console.log('[404]', req.method, req.path);
-  res.status(404).json({ message: `Cannot ${req.method} ${req.path}` });
-});
-
+app.use((req, res) => res.status(404).json({ message: `Cannot ${req.method} ${req.path}` }));
 app.use((err, req, res, next) => {
   console.error('[Error]', err.message);
   res.status(500).json({ message: 'Internal server error' });
@@ -167,25 +172,27 @@ async function start() {
   await connectDB();
   await connectRedis();
   await redisService.clearActiveBuses();
+  invalidateBusCache();
 
-  // WS server uses global broadcast
   initWSServer(server);
 
   const PORT = parseInt(process.env.PORT) || 5000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\nCampusTrack running on port ${PORT}`);
-    console.log(`  SSE test: http://localhost:${PORT}/sse/route/test\n`);
   });
 
-  // Keep Render awake
+  // Keep Render free tier awake — one ping every 14 min
   if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_HOSTNAME) {
     setInterval(async () => {
       try {
         const axios = require('axios');
         await axios.get(`https://${process.env.RENDER_EXTERNAL_HOSTNAME}/health`);
+        console.log('[Keep-alive] ping sent');
       } catch {}
     }, 14 * 60 * 1000);
   }
 }
 
 start().catch(err => { console.error('Startup failed:', err); process.exit(1); });
+
+module.exports = { broadcast };
