@@ -8,6 +8,7 @@ async function connectDB() {
     await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      dbName: "college_transport"
     });
     console.log('MongoDB connected:', mongoose.connection.host);
   } catch (err) {

@@ -6,8 +6,8 @@ const Admin  = require('./models/Admin');
 async function seed() {
   
   console.log(process.env.MONGO_URI)
-  // await mongoose.connect(process.env.MONGO_URI);
-  await mongoose.connect("mongodb+srv://giyu:DGWBRu3bXAmQH6XC@cluster0.bffh59k.mongodb.net/college-transport?appName=Cluster0");
+  await mongoose.connect("mongodb+srv://ramarajendran9585_db_user:Rama2006@transport-tracking.l9fcbrs.mongodb.net/?appName=transport-tracking",{dbName: "college_transport"});
+  // await mongoose.connect("mongodb+srv://ramarajendran9585_db_user:7n8plcwzexfEmU0x@transport-tracking.l9fcbrs.mongodb.net");
   
   console.log('MongoDB connected');
   await Driver.deleteMany({});
@@ -41,7 +41,7 @@ async function seed() {
       routeNumber: 'R1',
       isActive: true,
       stops: [   
-                {
+              {
                 "name": "Chatram Bus Stand",
                 "lat": 10.830750992756508,
                 "lng": 78.69332902847191,
