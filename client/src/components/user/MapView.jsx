@@ -121,13 +121,28 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
   useEffect(() => {
     if (mapRef.current) return;
 
+    const mapStyles = [
+      'https://demotiles.maplibre.org/style.json',
+      'https://tiles.openfreemap.org/styles/liberty',
+      'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    ];
+
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // OpenFreeMap — free, no API key, beautiful
-      style: 'https://tiles.openfreemap.org/styles/liberty',
+      // Use a stable public style for production. OpenFreeMap can sometimes fail
+      // silently in deployed environments, leaving the map blank with white tiles.
+      style: mapStyles[0],
       center:    [78.8537, 10.9152],
       zoom:      13,
       pitchWithRotate: false,
+    });
+
+    map.on('error', (event) => {
+      console.warn('MapLibre error:', event?.error || event);
+    });
+
+    map.on('style.load', () => {
+      console.info('MapLibre style loaded successfully.');
     });
 
     // Add navigation controls (zoom + compass)
