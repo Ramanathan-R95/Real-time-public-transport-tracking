@@ -1,7 +1,11 @@
+// Remove these two lines completely:
+// import * as maplibregl from 'maplibre-gl';
+// import 'maplibre-gl/dist/maplibre-gl.css';
+
 import React, { useEffect, useRef } from 'react';
-import * as maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import { haversine } from '../../utils/geoMath';
+
+// maplibregl is now a global from the CDN script in index.html
 
 function calcBearing(lat1, lng1, lat2, lng2) {
   const toRad = (d) => (d * Math.PI) / 180;
@@ -12,32 +16,6 @@ function calcBearing(lat1, lng1, lat2, lng2) {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-async function getRoadPath(from, to) {
-  const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.routes?.[0]?.geometry?.coordinates) {
-      return data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-    }
-  } catch (err) {
-    console.warn('OSRM route fetch failed, using straight line fallback:', err);
-  }
-  return [[from.lat, from.lng], [to.lat, to.lng]];
-}
-
-async function getFullRoadPath(stops) {
-  if (stops.length < 2) return [];
-  const segments = await Promise.all(
-    stops.slice(0, -1).map((s, i) => getRoadPath(s, stops[i + 1]))
-  );
-
-  return segments.reduce((acc, seg, i) => {
-    return i === 0 ? [...acc, ...seg] : [...acc, ...seg.slice(1)];
-  }, []);
-}
-
-// Create bus marker DOM element
 function createBusElement(vehicleNum, isSelected) {
   const el    = document.createElement('div');
   const size  = isSelected ? 56 : 44;
@@ -62,8 +40,7 @@ function createBusElement(vehicleNum, isSelected) {
         fill="${color}" opacity="0.12"/>
       <polygon
         points="${half},${tipY} ${half - arrowW},${baseY} ${half},${baseY - size * 0.07} ${half + arrowW},${baseY}"
-        fill="${color}" stroke="#0a0c10" stroke-width="0.5"
-        id="arrow-${vehicleNum}"/>
+        fill="${color}" stroke="#0a0c10" stroke-width="0.5"/>
       <circle cx="${half}" cy="${half}" r="3.5" fill="${color}"/>
       <rect x="1" y="${size + 1}" width="${size - 2}" height="15"
         rx="4" fill="#0a0c10" stroke="${color}" stroke-width="1"/>
@@ -80,163 +57,46 @@ function createBusElement(vehicleNum, isSelected) {
   return el;
 }
 
-// Create stop marker DOM element
 function createStopElement(order, isFirst, isLast) {
   const el    = document.createElement('div');
-  const fill  = '#0f172a';
-  const border = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
-  const labelColor = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#e2e8f0';
+  const color = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
   const label = isFirst ? 'S' : isLast ? 'E' : String(order);
   el.style.cssText = 'width:28px;height:28px;cursor:pointer;';
   el.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
-      <circle cx="14" cy="14" r="12" fill="${fill}" stroke="${border}" stroke-width="2"/>
+      <circle cx="14" cy="14" r="12" fill="#0a0c10" stroke="${color}" stroke-width="2"/>
       <text x="14" y="18" font-family="monospace"
         font-size="${label.length > 1 ? 7 : 10}"
         font-weight="bold" text-anchor="middle"
-        fill="${labelColor}">${label}</text>
+        fill="${color}">${label}</text>
     </svg>`;
   return el;
 }
 
 export default function MapView({ displayPos, stops, activeBuses = [], selectedDriverId }) {
-  const containerRef      = useRef(null);
-  const mapRef            = useRef(null);
-  const markersRef        = useRef({});   // driverId → maplibre Marker
-  const stopMarkersRef    = useRef([]);
-  const routeAddedRef     = useRef(false);
-  const isFollowingRef    = useRef(false);
-  const lastPanPosRef     = useRef(null);
-  const prevBusCountRef   = useRef(0);
-  const animFrameRef      = useRef(null); // for smooth marker interpolation
-  const activeBusesRef    = useRef(activeBuses);
-  const selectedIdRef     = useRef(selectedDriverId);
-  const stopsRef          = useRef(stops);
+  const containerRef    = useRef(null);
+  const mapRef          = useRef(null);
+  const markersRef      = useRef({});
+  const stopMarkersRef  = useRef([]);
+  const routeAddedRef   = useRef(false);
+  const isFollowingRef  = useRef(false);
+  const lastPanPosRef   = useRef(null);
+  const prevBusCountRef = useRef(0);
+  const activeBusesRef  = useRef(activeBuses);
+  const selectedIdRef   = useRef(selectedDriverId);
+  const stopsRef        = useRef(stops);
 
   useEffect(() => { activeBusesRef.current  = activeBuses;      }, [activeBuses]);
   useEffect(() => { selectedIdRef.current   = selectedDriverId; }, [selectedDriverId]);
   useEffect(() => { stopsRef.current        = stops;            }, [stops]);
 
-  // ── Init MapLibre ──
-  useEffect(() => {
-    if (mapRef.current) return;
-
-    const mapStyles = [
-      'https://demotiles.maplibre.org/style.json',
-      'https://tiles.openfreemap.org/styles/liberty',
-      'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-    ];
-
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      // Use a stable public style for production. OpenFreeMap can sometimes fail
-      // silently in deployed environments, leaving the map blank with white tiles.
-      style: mapStyles[0],
-      center:    [78.8537, 10.9152],
-      zoom:      13,
-      pitchWithRotate: false,
-    });
-
-    map.on('error', (event) => {
-      console.warn('MapLibre error:', event?.error || event);
-    });
-
-    map.on('style.load', () => {
-      console.info('MapLibre style loaded successfully.');
-    });
-
-    // Add navigation controls (zoom + compass)
-    map.addControl(new maplibregl.NavigationControl({
-      showCompass: true,
-      showZoom:    true,
-      visualizePitch: false,
-    }), 'top-right');
-
-    // Add geolocate control
-    map.addControl(new maplibregl.GeolocateControl({
-      positionOptions: { enableHighAccuracy: true },
-      trackUserLocation: false,
-    }), 'top-right');
-
-    // User drag stops auto-follow
-    map.on('dragstart', () => { isFollowingRef.current = false; });
-
-    map.on('load', () => {
-      // Add route source and layer (empty initially)
-      map.addSource('route', {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } },
-      });
-
-      // Main route line
-      map.addLayer({
-        id:     'route-line',
-        type:   'line',
-        source: 'route',
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint:  {
-          'line-color':   '#0f172a',
-          'line-width':   5,
-          'line-opacity': 0.95,
-        },
-      });
-
-      // Route direction arrows (dashes that look like arrows)
-      map.addLayer({
-        id:     'route-arrows',
-        type:   'symbol',
-        source: 'route',
-        layout: {
-          'symbol-placement': 'line',
-          'symbol-spacing':   80,
-          'icon-image':       'border-arrow-up',
-          'icon-size':        0.75,
-          'icon-rotate':      0,
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true,
-        },
-        paint: { 'icon-opacity': 0.75 },
-      });
-
-      routeAddedRef.current = true;
-
-      // Snap to buses or route on load
-      setTimeout(() => {
-        const buses = activeBusesRef.current.filter((b) => b.lat && b.lng);
-        if (buses.length > 0) {
-          const target = selectedIdRef.current
-            ? buses.find((b) => b.driverId === selectedIdRef.current) || buses[0]
-            : buses[0];
-          zoomToBus(target);
-        } else if (stopsRef.current?.length) {
-          fitToRoute(stopsRef.current);
-        }
-      }, 800);
-    });
-
-    mapRef.current = map;
-
-    return () => {
-      cancelAnimationFrame(animFrameRef.current);
-      map.remove();
-      mapRef.current     = null;
-      markersRef.current = {};
-      stopMarkersRef.current = [];
-      routeAddedRef.current  = false;
-      isFollowingRef.current = false;
-    };
-  }, []);
-
-  // ── Helper: zoom to bus with smooth flight ──
   function zoomToBus(bus) {
     const map = mapRef.current;
     if (!map || !bus?.lat || !bus?.lng) return;
-    const lat = Number(bus.lat);
-    const lng = Number(bus.lng);
     isFollowingRef.current = true;
-    lastPanPosRef.current  = { lat, lng };
+    lastPanPosRef.current  = { lat: Number(bus.lat), lng: Number(bus.lng) };
     map.flyTo({
-      center:   [lng, lat],
+      center:   [Number(bus.lng), Number(bus.lat)],
       zoom:     17,
       speed:    1.4,
       curve:    1,
@@ -244,7 +104,6 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     });
   }
 
-  // ── Helper: fit map to route bounds ──
   function fitToRoute(stopsArr) {
     const map = mapRef.current;
     if (!map || !stopsArr?.length) return;
@@ -256,54 +115,125 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     const lngs = sorted.map((s) => s.lng);
     const lats = sorted.map((s) => s.lat);
     map.fitBounds(
-      [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+      [[Math.min(...lngs), Math.min(...lats)],
+       [Math.max(...lngs), Math.max(...lats)]],
       { padding: 60, maxZoom: 16, duration: 1000 }
     );
   }
 
-  // ── Draw stops + route line when stops change ──
+  // ── Init map ──
+  useEffect(() => {
+    if (mapRef.current) return;
+
+    // Wait for maplibregl global to be available
+    if (typeof maplibregl === 'undefined') {
+      console.error('[Map] maplibregl not loaded yet');
+      return;
+    }
+
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style:     'https://tiles.openfreemap.org/styles/liberty',
+      center:    [78.8537, 10.9152],
+      zoom:      13,
+    });
+
+    map.addControl(new maplibregl.NavigationControl({
+      showCompass: true,
+      showZoom:    true,
+    }), 'top-right');
+
+    map.addControl(new maplibregl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: false,
+    }), 'top-right');
+
+    map.on('dragstart', () => { isFollowingRef.current = false; });
+
+    map.on('load', () => {
+      console.log('[Map] Loaded successfully');
+
+      map.addSource('route', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } },
+      });
+
+      map.addLayer({
+        id:     'route-line',
+        type:   'line',
+        source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint:  {
+          'line-color':   '#3b82f6',
+          'line-width':   4,
+          'line-opacity': 0.8,
+        },
+      });
+
+      routeAddedRef.current = true;
+
+      // Snap to existing data after load
+      setTimeout(() => {
+        const buses = activeBusesRef.current.filter((b) => b.lat && b.lng);
+        if (buses.length > 0) {
+          const target = selectedIdRef.current
+            ? buses.find((b) => b.driverId === selectedIdRef.current) || buses[0]
+            : buses[0];
+          zoomToBus(target);
+        } else if (stopsRef.current?.length) {
+          fitToRoute(stopsRef.current);
+        }
+      }, 500);
+    });
+
+    map.on('error', (e) => {
+      console.error('[Map] Error:', e.error?.message || e);
+    });
+
+    mapRef.current = map;
+
+    return () => {
+      map.remove();
+      mapRef.current        = null;
+      markersRef.current    = {};
+      stopMarkersRef.current = [];
+      routeAddedRef.current  = false;
+      isFollowingRef.current = false;
+    };
+  }, []);
+
+  // ── Draw stops ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !stops?.length) return;
 
-    // Remove old stop markers
     stopMarkersRef.current.forEach((m) => m.remove());
     stopMarkersRef.current = [];
 
     const sorted = [...stops].sort((a, b) => a.order - b.order);
 
-    // Update route GeoJSON
-    const updateRoute = async () => {
-      if (!routeAddedRef.current) return;
-      let coords = sorted.map((s) => [s.lng, s.lat]);
-
-      if (sorted.length >= 2) {
-        const roadPath = await getFullRoadPath(sorted);
-        if (roadPath.length > 1) {
-          coords = roadPath.map(([lat, lng]) => [lng, lat]);
-        }
-      }
-
+    const updateRoute = () => {
       const source = map.getSource('route');
-      if (source) {
-        source.setData({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: coords },
-        });
-      }
+      if (!source) return;
+      source.setData({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: sorted.map((s) => [s.lng, s.lat]),
+        },
+      });
     };
 
     if (map.loaded()) updateRoute();
     else map.on('load', updateRoute);
 
-    // Add stop markers
     sorted.forEach((stop, i) => {
-      const el     = createStopElement(stop.order, i === 0, i === sorted.length - 1);
-      const popup  = new maplibregl.Popup({ offset: 20, closeButton: false })
+      const el    = createStopElement(stop.order, i === 0, i === sorted.length - 1);
+      const popup = new maplibregl.Popup({ offset: 20, closeButton: false })
         .setHTML(`
           <div style="font-family:monospace;font-size:12px;
             background:#0f1219;color:#e2e8f0;
-            padding:8px 12px;border-radius:8px;min-width:100px">
+            padding:8px 12px;border-radius:8px">
             <div style="color:#00e5a0;font-weight:bold;margin-bottom:3px">${stop.name}</div>
             <div style="color:#64748b">Stop ${stop.order}</div>
           </div>`);
@@ -316,18 +246,16 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
       stopMarkersRef.current.push(marker);
     });
 
-    // Fit to route only if not following a bus
     if (!isFollowingRef.current) fitToRoute(stops);
   }, [stops]);
 
-  // ── Update bus markers when activeBuses changes ──
+  // ── Update bus markers ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const currentIds = new Set(activeBuses.map((b) => b.driverId));
 
-    // Remove gone buses
     Object.entries(markersRef.current).forEach(([id, data]) => {
       if (!currentIds.has(id)) {
         data.marker.remove();
@@ -335,7 +263,6 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
       }
     });
 
-    // Add / update
     activeBuses.forEach((bus) => {
       if (!bus.lat || !bus.lng) return;
 
@@ -364,11 +291,7 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
               <div style="color:#64748b;margin-top:2px">${bus.driverName}</div>
             </div>`);
 
-        const marker = new maplibregl.Marker({
-          element: el,
-          anchor:  'center',
-          rotationAlignment: 'map',
-        })
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
           .setLngLat([lng, lat])
           .setRotation(deg)
           .setPopup(popup)
@@ -377,19 +300,17 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
         markersRef.current[bus.driverId] = {
           marker, bearing: deg,
           prevLat: lat, prevLng: lng,
-          el,
+          isSelected, el,
         };
       } else {
-        // Update bearing BEFORE moving
         existing.bearing = deg;
         existing.marker.setLngLat([lng, lat]);
         existing.marker.setRotation(deg);
 
-        // Recreate element if selection state changed
         if (existing.isSelected !== isSelected) {
           const newEl = createBusElement(bus.vehicleNumber, isSelected);
-          existing.marker.getElement().replaceWith(newEl);
-          existing.el        = newEl;
+          existing.el.replaceWith(newEl);
+          existing.el         = newEl;
           existing.isSelected = isSelected;
         }
 
@@ -399,8 +320,7 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     });
   }, [activeBuses, selectedDriverId]);
 
-  // ── Smooth interpolated movement — Google Maps style ──
-  // MapLibre supports sub-pixel rendering so movement is extremely smooth
+  // ── Smooth interpolated movement ──
   useEffect(() => {
     if (!displayPos || !selectedDriverId) return;
     const map = mapRef.current;
@@ -413,7 +333,6 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     const existing = markersRef.current[selectedDriverId];
     if (!existing) return;
 
-    // Compute bearing from previous interpolated position
     let deg = existing.bearing ?? 0;
     if (existing.prevLat !== undefined) {
       const moved = haversine(existing.prevLat, existing.prevLng, lat, lng);
@@ -423,14 +342,12 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
       }
     }
 
-    // Move marker — MapLibre handles sub-pixel rendering automatically
     existing.marker.setLngLat([lng, lat]);
     existing.marker.setRotation(deg);
     existing.bearing = deg;
     existing.prevLat = lat;
     existing.prevLng = lng;
 
-    // Pan map smoothly — only when moved > 15m
     if (isFollowingRef.current) {
       const last      = lastPanPosRef.current;
       const distMoved = last ? haversine(last.lat, last.lng, lat, lng) : 999;
@@ -438,8 +355,8 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
         lastPanPosRef.current = { lat, lng };
         map.easeTo({
           center:   [lng, lat],
-          duration: 800,      // smooth 800ms pan
-          easing:   (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t, // ease-in-out
+          duration: 800,
+          easing:   (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
         });
       }
     }

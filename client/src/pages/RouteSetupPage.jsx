@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+// import * as maplibregl from 'maplibre-gl';
+// import 'maplibre-gl/dist/maplibre-gl.css';
 import api from '../services/api';
 
 // ── Nominatim search (OSM geocoding, free, no key) ──
