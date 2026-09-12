@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import L from 'leaflet';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import api from '../services/api';
 
 // ── Nominatim search (OSM geocoding, free, no key) ──
@@ -40,18 +41,22 @@ async function getFullRoadPath(stops) {
 }
 
 function createStopIcon(index, isFirst, isLast) {
-  const bg = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#1a1f2e';
-  const border = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#4b5563';
-  const textColor = isFirst || isLast ? '#0a0c10' : '#00e5a0';
+  const bg = isFirst ? '#0f172a' : isLast ? '#0f172a' : '#0f172a';
+  const border = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
+  const textColor = isFirst || isLast ? (isFirst ? '#00e5a0' : '#ff4d4d') : '#e2e8f0';
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
-      <circle cx="17" cy="17" r="14" fill="${bg}" fill-opacity="${isFirst || isLast ? 1 : 0.15}"
+      <circle cx="17" cy="17" r="14" fill="${bg}" fill-opacity="0.95"
         stroke="${border}" stroke-width="2"/>
       <text x="17" y="21" font-family="monospace" font-size="11" font-weight="bold"
         text-anchor="middle" fill="${textColor}">${index + 1}</text>
     </svg>
   `;
-  return L.divIcon({ html: svg, iconSize: [34, 34], iconAnchor: [17, 17], className: '' });
+  const el = document.createElement('div');
+  el.innerHTML = svg;
+  el.style.width = '34px';
+  el.style.height = '34px';
+  return el;
 }
 
 export default function RouteSetupPage() {
@@ -81,22 +86,21 @@ export default function RouteSetupPage() {
   // Init map
   useEffect(() => {
     if (mapInstanceRef.current) return;
-    const map = L.map(mapRef.current, {
-      center: [10.9152, 78.8537],
-      zoom: 15,
-      zoomControl: true,
-    });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap',
-      maxZoom: 19,
-    }).addTo(map);
 
-    // Allow clicking map directly too
+    const map = new maplibregl.Map({
+      container: mapRef.current,
+      style:     'https://tiles.openfreemap.org/styles/liberty',
+      center:    [78.8537, 10.9152],
+      zoom:      14,
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
     map.on('click', (e) => {
       setPendingStop({
-        lat: e.latlng.lat,
-        lng: e.latlng.lng,
-        displayName: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`,
+        lat: e.lngLat.lat,
+        lng: e.lngLat.lng,
+        displayName: `${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}`,
       });
       setStopLabel('');
     });
@@ -119,32 +123,45 @@ export default function RouteSetupPage() {
   }, [searchQuery]);
 
   // Redraw markers + road route when stops change
+  // Replace the stops useEffect markers section:
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Clear markers
+    // Remove old markers
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    // Clear route line
-    if (routeLineRef.current) { routeLineRef.current.remove(); routeLineRef.current = null; }
+    // Remove old route line
+    if (map.getLayer('route-setup-line')) map.removeLayer('route-setup-line');
+    if (map.getSource('route-setup'))     map.removeSource('route-setup');
 
-    // Draw markers
+    if (stops.length === 0) return;
+
+    // Add stop markers
     stops.forEach((stop, i) => {
-      const icon = createStopIcon(i, i === 0, i === stops.length - 1);
-      const marker = L.marker([stop.lat, stop.lng], { icon, draggable: true })
-        .addTo(map)
-        .bindTooltip(`<span style="font-family:monospace;font-size:11px">${stop.name}</span>`, {
-          permanent: true,
-          direction: 'top',
-          offset: [0, -20],
-          className: 'stop-tooltip',
-        });
+      const el  = document.createElement('div');
+      const color = i === 0 ? '#0f172a' : i === stops.length - 1 ? '#0f172a' : '#0f172a';
+      const border = i === 0 ? '#00e5a0' : i === stops.length - 1 ? '#ff4d4d' : '#475569';
+      const textColor = i === 0 ? '#00e5a0' : i === stops.length - 1 ? '#ff4d4d' : '#e2e8f0';
+      el.style.cssText = 'width:34px;height:34px;cursor:pointer;';
+      el.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
+          <circle cx="17" cy="17" r="14"
+            fill="${color}"
+            fill-opacity="0.96"
+            stroke="${border}" stroke-width="2"/>
+          <text x="17" y="21" font-family="monospace" font-size="11"
+            font-weight="bold" text-anchor="middle"
+            fill="${textColor}">${i + 1}</text>
+        </svg>`;
 
-      // Allow dragging to adjust position
-      marker.on('dragend', (e) => {
-        const { lat, lng } = e.target.getLatLng();
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center', draggable: true })
+        .setLngLat([stop.lng, stop.lat])
+        .addTo(map);
+
+      marker.on('dragend', () => {
+        const { lat, lng } = marker.getLngLat();
         setStops((prev) => {
           const updated = [...prev];
           updated[i] = { ...updated[i], lat, lng };
@@ -155,15 +172,43 @@ export default function RouteSetupPage() {
       markersRef.current.push(marker);
     });
 
-    // Draw road route
+    // Draw route line
+    const addRoute = () => {
+      const coords = stops.map((s) => [s.lng, s.lat]);
+      if (!map.getSource('route-setup')) {
+        map.addSource('route-setup', {
+          type: 'geojson',
+          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } },
+        });
+        map.addLayer({
+          id:     'route-setup-line',
+          type:   'line',
+          source: 'route-setup',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint:  { 'line-color': '#0f172a', 'line-width': 4, 'line-opacity': 0.9 },
+        });
+      } else {
+        map.getSource('route-setup').setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+        });
+      }
+    };
+
+    if (map.loaded()) addRoute();
+    else map.on('load', addRoute);
+
+    // Also fetch OSRM road path and update
     if (stops.length >= 2) {
       getFullRoadPath(stops).then((path) => {
-        if (!mapInstanceRef.current) return;
-        routeLineRef.current = L.polyline(path, {
-          color: '#00e5a0',
-          weight: 4,
-          opacity: 0.7,
-        }).addTo(mapInstanceRef.current);
+        const coords = path.map(([lat, lng]) => [lng, lat]);
+        const source = map.getSource('route-setup');
+        if (source) {
+          source.setData({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: coords },
+          });
+        }
       });
     }
   }, [stops]);
@@ -178,7 +223,15 @@ export default function RouteSetupPage() {
     setSearchQuery('');
 
     // Pan map to location
-    mapInstanceRef.current?.setView([lat, lng], 17);
+    const map = mapInstanceRef.current;
+    if (map) {
+      map.flyTo({
+        center: [lng, lat],
+        zoom: 17,
+        speed: 1.5,
+        essential: true,
+      });
+    }
 
     // Set as pending stop with the place name pre-filled
     setPendingStop({ lat, lng, displayName: name });
