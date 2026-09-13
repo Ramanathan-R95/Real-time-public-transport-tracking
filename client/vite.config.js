@@ -4,10 +4,6 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ command }) => ({
   plugins: [react()],
 
-  optimizeDeps: {
-    exclude: ['maplibre-gl'],
-  },
-
   server: command === 'serve' ? {
     port: 5173,
     proxy: {
@@ -24,9 +20,8 @@ export default defineConfig(({ command }) => ({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor:   ['react', 'react-dom', 'react-router-dom'],
-          maplibre: ['maplibre-gl'],
-          axios:    ['axios'],
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          axios:  ['axios'],
         },
       },
     },
