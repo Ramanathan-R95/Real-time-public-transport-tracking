@@ -73,6 +73,33 @@ function createStopElement(order, isFirst, isLast) {
   return el;
 }
 
+async function getOSRMPath(stops) {
+  if (!stops || stops.length < 2) return [];
+
+  try {
+    const coords = stops
+      .slice()
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((s) => `${s.lng},${s.lat}`)
+      .join(';');
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.routes?.[0]?.geometry?.coordinates?.length) {
+      return data.routes[0].geometry.coordinates;
+    }
+  } catch (err) {
+    console.error('[MapView] OSRM route fetch failed:', err);
+  }
+
+  return stops
+    .slice()
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((s) => [s.lng, s.lat]);
+}
+
 export default function MapView({ displayPos, stops, activeBuses = [], selectedDriverId }) {
   const containerRef    = useRef(null);
   const mapRef          = useRef(null);
@@ -215,12 +242,20 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     const updateRoute = () => {
       const source = map.getSource('route');
       if (!source) return;
-      source.setData({
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: sorted.map((s) => [s.lng, s.lat]),
-        },
+
+      if (sorted.length < 2) {
+        source.setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [] },
+        });
+        return;
+      }
+
+      getOSRMPath(sorted).then((coords) => {
+        source.setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+        });
       });
     };
 

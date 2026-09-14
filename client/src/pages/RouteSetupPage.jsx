@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-// import * as maplibregl from 'maplibre-gl';
-// import 'maplibre-gl/dist/maplibre-gl.css';
 import api from '../services/api';
 
-// ── Nominatim search (OSM geocoding, free, no key) ──
+// ── Nominatim search ──
 async function searchPlaces(query) {
   if (!query || query.length < 3) return [];
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6&addressdetails=1`;
@@ -14,76 +12,77 @@ async function searchPlaces(query) {
   return res.json();
 }
 
-// ── OSRM road routing between two points (free, no key) ──
-async function getRoadPath(from, to) {
-  const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.routes?.[0]) {
-      return data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-    }
-  } catch {}
-  // Fallback: straight line
-  return [[from.lat, from.lng], [to.lat, to.lng]];
-}
-
-// ── Get full road path through all stops in order ──
-async function getFullRoadPath(stops) {
+// ── OSRM road path between consecutive stops ──
+async function getOSRMPath(stops) {
   if (stops.length < 2) return [];
-  const segments = await Promise.all(
-    stops.slice(0, -1).map((s, i) => getRoadPath(s, stops[i + 1]))
-  );
-  // Merge segments, removing duplicate junction points
-  return segments.reduce((acc, seg, i) => {
-    return i === 0 ? [...acc, ...seg] : [...acc, ...seg.slice(1)];
-  }, []);
+  try {
+    const coords = stops.map((s) => `${s.lng},${s.lat}`).join(';');
+    const url    = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+    const res    = await fetch(url);
+    const data   = await res.json();
+    if (data.routes?.[0]?.geometry?.coordinates?.length) {
+      // Returns [lng, lat] pairs — MapLibre uses [lng, lat]
+      return data.routes[0].geometry.coordinates;
+    }
+  } catch (err) {
+    console.error('[OSRM] Failed:', err);
+  }
+  // Fallback: straight line
+  return stops.map((s) => [s.lng, s.lat]);
 }
 
-function createStopIcon(index, isFirst, isLast) {
-  const bg = isFirst ? '#0f172a' : isLast ? '#0f172a' : '#0f172a';
-  const border = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
-  const textColor = isFirst || isLast ? (isFirst ? '#00e5a0' : '#ff4d4d') : '#e2e8f0';
-  const svg = `
+function setRouteGeometry(map, coordinates) {
+  const source = map?.getSource?.('route');
+  if (!source) return;
+
+  source.setData({
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates },
+  });
+}
+
+function createStopMarkerEl(index, total) {
+  const el     = document.createElement('div');
+  const isFirst = index === 0;
+  const isLast  = index === total - 1;
+  const color   = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#1a1f2e';
+  const border  = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#4b5563';
+  const text    = isFirst ? 'S' : isLast ? 'E' : String(index + 1);
+  const textClr = isFirst || isLast ? '#0a0c10' : '#00e5a0';
+  el.style.cssText = 'width:34px;height:34px;cursor:grab;';
+  el.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
-      <circle cx="17" cy="17" r="14" fill="${bg}" fill-opacity="0.95"
+      <circle cx="17" cy="17" r="14"
+        fill="${color}" fill-opacity="${isFirst || isLast ? 1 : 0.2}"
         stroke="${border}" stroke-width="2"/>
-      <text x="17" y="21" font-family="monospace" font-size="11" font-weight="bold"
-        text-anchor="middle" fill="${textColor}">${index + 1}</text>
-    </svg>
-  `;
-  const el = document.createElement('div');
-  el.innerHTML = svg;
-  el.style.width = '34px';
-  el.style.height = '34px';
+      <text x="17" y="21" font-family="monospace" font-size="11"
+        font-weight="bold" text-anchor="middle" fill="${textClr}">${text}</text>
+    </svg>`;
   return el;
 }
 
 export default function RouteSetupPage() {
   const navigate = useNavigate();
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]);
-  const routeLineRef = useRef(null);
+  const mapRef          = useRef(null);
+  const mapInstanceRef  = useRef(null);
+  const markersRef      = useRef([]);
+  const routeSourceRef  = useRef(false);
 
-  const [routeName, setRouteName] = useState('');
-  const [routeNumber, setRouteNumber] = useState('');
-  const [stops, setStops] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [routeName,      setRouteName]      = useState('');
+  const [routeNumber,    setRouteNumber]    = useState('');
+  const [stops,          setStops]          = useState([]);
+  const [saving,         setSaving]         = useState(false);
+  const [error,          setError]          = useState('');
+  const [searchQuery,    setSearchQuery]    = useState('');
+  const [suggestions,    setSuggestions]    = useState([]);
+  const [searching,      setSearching]      = useState(false);
+  const [searchFocused,  setSearchFocused]  = useState(false);
+  const [pendingStop,    setPendingStop]    = useState(null);
+  const [stopLabel,      setStopLabel]      = useState('');
+  const [routeLoading,   setRouteLoading]   = useState(false);
+  const searchDebounce  = useRef(null);
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [suggestions, setSuggestions] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [searchFocused, setSearchFocused] = useState(false);
-  const searchDebounce = useRef(null);
-
-  // Pending stop before name confirmed
-  const [pendingStop, setPendingStop] = useState(null); // { lat, lng, displayName }
-  const [stopLabel, setStopLabel] = useState('');
-
-  // Init map
+  // ── Init map ──
   useEffect(() => {
     if (mapInstanceRef.current) return;
 
@@ -96,10 +95,46 @@ export default function RouteSetupPage() {
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+    map.on('load', () => {
+      // Add route source and layers
+      map.addSource('route', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } },
+      });
+
+      // Road line
+      map.addLayer({
+        id:     'route-road',
+        type:   'line',
+        source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint:  {
+          'line-color':   '#00e5a0',
+          'line-width':   4,
+          'line-opacity': 0.8,
+        },
+      });
+
+      // Casing (outline) for depth effect
+      map.addLayer({
+        id:     'route-casing',
+        type:   'line',
+        source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint:  {
+          'line-color':    '#064e3b',
+          'line-width':    7,
+          'line-opacity':  0.4,
+        },
+      }, 'route-road');
+
+      routeSourceRef.current = true;
+    });
+
     map.on('click', (e) => {
       setPendingStop({
-        lat: e.lngLat.lat,
-        lng: e.lngLat.lng,
+        lat:         e.lngLat.lat,
+        lng:         e.lngLat.lng,
         displayName: `${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}`,
       });
       setStopLabel('');
@@ -109,21 +144,7 @@ export default function RouteSetupPage() {
     return () => { map.remove(); mapInstanceRef.current = null; };
   }, []);
 
-  // Debounced nominatim search
-  useEffect(() => {
-    clearTimeout(searchDebounce.current);
-    if (searchQuery.length < 3) { setSuggestions([]); return; }
-    setSearching(true);
-    searchDebounce.current = setTimeout(async () => {
-      const results = await searchPlaces(searchQuery);
-      setSuggestions(results);
-      setSearching(false);
-    }, 400);
-    return () => clearTimeout(searchDebounce.current);
-  }, [searchQuery]);
-
-  // Redraw markers + road route when stops change
-  // Replace the stops useEffect markers section:
+  // ── Redraw markers + fetch OSRM road path when stops change ──
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -132,34 +153,14 @@ export default function RouteSetupPage() {
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    // Remove old route line
-    if (map.getLayer('route-setup-line')) map.removeLayer('route-setup-line');
-    if (map.getSource('route-setup'))     map.removeSource('route-setup');
-
-    if (stops.length === 0) return;
-
-    // Add stop markers
+    // Add stop markers (draggable)
     stops.forEach((stop, i) => {
-      const el  = document.createElement('div');
-      const color = i === 0 ? '#0f172a' : i === stops.length - 1 ? '#0f172a' : '#0f172a';
-      const border = i === 0 ? '#00e5a0' : i === stops.length - 1 ? '#ff4d4d' : '#475569';
-      const textColor = i === 0 ? '#00e5a0' : i === stops.length - 1 ? '#ff4d4d' : '#e2e8f0';
-      el.style.cssText = 'width:34px;height:34px;cursor:pointer;';
-      el.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
-          <circle cx="17" cy="17" r="14"
-            fill="${color}"
-            fill-opacity="0.96"
-            stroke="${border}" stroke-width="2"/>
-          <text x="17" y="21" font-family="monospace" font-size="11"
-            font-weight="bold" text-anchor="middle"
-            fill="${textColor}">${i + 1}</text>
-        </svg>`;
-
+      const el     = createStopMarkerEl(i, stops.length);
       const marker = new maplibregl.Marker({ element: el, anchor: 'center', draggable: true })
         .setLngLat([stop.lng, stop.lat])
         .addTo(map);
 
+      // Update stop position on drag
       marker.on('dragend', () => {
         const { lat, lng } = marker.getLngLat();
         setStops((prev) => {
@@ -172,68 +173,50 @@ export default function RouteSetupPage() {
       markersRef.current.push(marker);
     });
 
-    // Draw route line
-    const addRoute = () => {
-      const coords = stops.map((s) => [s.lng, s.lat]);
-      if (!map.getSource('route-setup')) {
-        map.addSource('route-setup', {
-          type: 'geojson',
-          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } },
-        });
-        map.addLayer({
-          id:     'route-setup-line',
-          type:   'line',
-          source: 'route-setup',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint:  { 'line-color': '#0f172a', 'line-width': 4, 'line-opacity': 0.9 },
-        });
-      } else {
-        map.getSource('route-setup').setData({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: coords },
-        });
-      }
-    };
+    // Fetch OSRM road path
+    if (stops.length >= 2 && routeSourceRef.current) {
+      setRouteLoading(true);
+      let isActive = true;
 
-    if (map.loaded()) addRoute();
-    else map.on('load', addRoute);
-
-    // Also fetch OSRM road path and update
-    if (stops.length >= 2) {
-      getFullRoadPath(stops).then((path) => {
-        const coords = path.map(([lat, lng]) => [lng, lat]);
-        const source = map.getSource('route-setup');
-        if (source) {
-          source.setData({
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: coords },
-          });
-        }
+      getOSRMPath(stops).then((coords) => {
+        if (!isActive) return;
+        setRouteGeometry(map, coords);
+        setRouteLoading(false);
+      }).catch(() => {
+        if (!isActive) return;
+        setRouteGeometry(map, stops.map((s) => [s.lng, s.lat]));
+        setRouteLoading(false);
       });
+
+      return () => { isActive = false; };
+    }
+
+    if (routeSourceRef.current) {
+      setRouteGeometry(map, []);
+      setRouteLoading(false);
     }
   }, [stops]);
 
-  // When a suggestion is selected from search
-  function handleSuggestionSelect(place) {
-    const lat = parseFloat(place.lat);
-    const lng = parseFloat(place.lon);
-    const name = place.display_name.split(',').slice(0, 2).join(', ');
+  // ── Nominatim debounced search ──
+  useEffect(() => {
+    clearTimeout(searchDebounce.current);
+    if (searchQuery.length < 3) { setSuggestions([]); return; }
+    setSearching(true);
+    searchDebounce.current = setTimeout(async () => {
+      const results = await searchPlaces(searchQuery);
+      setSuggestions(results);
+      setSearching(false);
+    }, 400);
+    return () => clearTimeout(searchDebounce.current);
+  }, [searchQuery]);
 
+  function handleSuggestionSelect(place) {
+    const lat  = parseFloat(place.lat);
+    const lng  = parseFloat(place.lon);
+    const name = place.display_name.split(',').slice(0, 2).join(', ');
     setSuggestions([]);
     setSearchQuery('');
-
-    // Pan map to location
-    const map = mapInstanceRef.current;
-    if (map) {
-      map.flyTo({
-        center: [lng, lat],
-        zoom: 17,
-        speed: 1.5,
-        essential: true,
-      });
-    }
-
-    // Set as pending stop with the place name pre-filled
+    mapInstanceRef.current?.flyTo({ center: [lng, lat], zoom: 17, speed: 1.4 });
     setPendingStop({ lat, lng, displayName: name });
     setStopLabel(name);
   }
@@ -242,18 +225,8 @@ export default function RouteSetupPage() {
     if (!pendingStop || !stopLabel.trim()) return;
     setStops((prev) => [
       ...prev,
-      {
-        name: stopLabel.trim(),
-        lat: pendingStop.lat,
-        lng: pendingStop.lng,
-        order: prev.length + 1,
-      },
+      { name: stopLabel.trim(), lat: pendingStop.lat, lng: pendingStop.lng, order: prev.length + 1 },
     ]);
-    setPendingStop(null);
-    setStopLabel('');
-  }
-
-  function cancelPendingStop() {
     setPendingStop(null);
     setStopLabel('');
   }
@@ -275,9 +248,9 @@ export default function RouteSetupPage() {
   }
 
   async function handleSave() {
-    if (!routeName.trim()) return setError('Route name is required');
-    if (!routeNumber.trim()) return setError('Route number is required');
-    if (stops.length < 2) return setError('Add at least 2 stops');
+    if (!routeName.trim())    return setError('Route name is required');
+    if (!routeNumber.trim())  return setError('Route number is required');
+    if (stops.length < 2)     return setError('Add at least 2 stops');
     setError('');
     setSaving(true);
     try {
@@ -291,141 +264,66 @@ export default function RouteSetupPage() {
   }
 
   return (
-    <div style={{
-      height: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      background: 'var(--bg)',
-      overflow: 'hidden',
-    }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', overflow: 'hidden' }}>
 
       {/* Header */}
       <div style={{
-        padding: '12px 20px',
-        background: 'var(--surface)',
+        padding: '12px 20px', background: 'var(--surface)',
         borderBottom: '1px solid var(--border)',
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
       }}>
         <div>
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10,
-            color: 'var(--accent)',
-            letterSpacing: 3,
-            marginBottom: 2,
-          }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', letterSpacing: 3, marginBottom: 2 }}>
             CAMPUSTRACK
           </div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Setup Your Route</div>
         </div>
-        <button
-          onClick={() => navigate('/driver')}
-          style={{
-            padding: '7px 14px',
-            background: 'transparent',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            color: 'var(--text-dim)',
-            fontSize: 13,
-            cursor: 'pointer',
-          }}
-        >
+        <button onClick={() => navigate('/driver')} style={{
+          padding: '7px 14px', background: 'transparent',
+          border: '1px solid var(--border)', borderRadius: 8,
+          color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer',
+        }}>
           Cancel
         </button>
       </div>
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* ── Left panel ── */}
+        {/* Left panel */}
         <div style={{
-          width: 340,
-          background: 'var(--surface)',
+          width: 340, background: 'var(--surface)',
           borderRight: '1px solid var(--border)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          flexShrink: 0,
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden', flexShrink: 0,
         }}>
 
           {/* Route name + number */}
-          <div style={{
-            padding: '14px 16px',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 10,
-          }}>
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-dim)',
-                letterSpacing: 1,
-                marginBottom: 5,
-              }}>
-                ROUTE NAME
-              </label>
-              <input
-                value={routeName}
-                onChange={(e) => setRouteName(e.target.value)}
-                placeholder="e.g. Main Gate to Engineering Block"
-                style={{
-                  width: '100%',
-                  padding: '9px 12px',
-                  background: 'var(--surface2)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                  fontSize: 13,
-                }}
-              />
-            </div>
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-dim)',
-                letterSpacing: 1,
-                marginBottom: 5,
-              }}>
-                ROUTE NUMBER
-              </label>
-              <input
-                value={routeNumber}
-                onChange={(e) => setRouteNumber(e.target.value)}
-                placeholder="e.g. R4"
-                style={{
-                  width: '100%',
-                  padding: '9px 12px',
-                  background: 'var(--surface2)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                  fontSize: 13,
-                }}
-              />
-            </div>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[
+              { label: 'ROUTE NAME',   value: routeName,   set: setRouteName,   placeholder: 'e.g. Main Gate to Engineering' },
+              { label: 'ROUTE NUMBER', value: routeNumber, set: setRouteNumber, placeholder: 'e.g. R4' },
+            ].map(({ label, value, set, placeholder }) => (
+              <div key={label}>
+                <label style={{ display: 'block', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', letterSpacing: 1, marginBottom: 5 }}>
+                  {label}
+                </label>
+                <input
+                  value={value}
+                  onChange={(e) => set(e.target.value)}
+                  placeholder={placeholder}
+                  style={{
+                    width: '100%', padding: '9px 12px',
+                    background: 'var(--surface2)', border: '1px solid var(--border)',
+                    borderRadius: 8, color: 'var(--text)', fontSize: 13,
+                  }}
+                />
+              </div>
+            ))}
           </div>
 
-          {/* Search box */}
-          <div style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--border)',
-            position: 'relative',
-          }}>
-            <label style={{
-              display: 'block',
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-dim)',
-              letterSpacing: 1,
-              marginBottom: 6,
-            }}>
+          {/* Search */}
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', position: 'relative' }}>
+            <label style={{ display: 'block', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', letterSpacing: 1, marginBottom: 6 }}>
               SEARCH & ADD STOP
             </label>
             <div style={{ position: 'relative' }}>
@@ -436,51 +334,32 @@ export default function RouteSetupPage() {
                 onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
                 placeholder="Type stop name or location..."
                 style={{
-                  width: '100%',
-                  padding: '9px 36px 9px 12px',
+                  width: '100%', padding: '9px 36px 9px 12px',
                   background: 'var(--surface2)',
                   border: `1px solid ${searchFocused ? 'var(--accent)' : 'var(--border)'}`,
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                  fontSize: 13,
+                  borderRadius: 8, color: 'var(--text)', fontSize: 13,
                   transition: 'border-color 0.2s',
                 }}
               />
               {searching && (
                 <div style={{
-                  position: 'absolute',
-                  right: 10,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  width: 14,
-                  height: 14,
-                  border: '2px solid var(--accent)',
-                  borderTopColor: 'transparent',
-                  borderRadius: '50%',
-                  animation: 'spin 0.7s linear infinite',
+                  position: 'absolute', right: 10, top: '50%',
+                  width: 14, height: 14, marginTop: -7,
+                  border: '2px solid var(--accent)', borderTopColor: 'transparent',
+                  borderRadius: '50%', animation: 'spin 0.7s linear infinite',
                 }} />
               )}
             </div>
 
-            {/* Suggestions dropdown */}
             {suggestions.length > 0 && searchFocused && (
               <div style={{
-                position: 'absolute',
-                left: 16,
-                right: 16,
-                top: '100%',
-                marginTop: -2,
-                background: 'var(--surface2)',
-                border: '1px solid var(--accent)',
-                borderRadius: '0 0 10px 10px',
-                zIndex: 2000,
-                overflow: 'hidden',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                position: 'absolute', left: 16, right: 16, top: '100%',
+                background: 'var(--surface2)', border: '1px solid var(--accent)',
+                borderRadius: '0 0 10px 10px', zIndex: 2000,
+                overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
               }}>
                 {suggestions.map((place, i) => {
                   const parts = place.display_name.split(',');
-                  const main = parts.slice(0, 2).join(',');
-                  const sub = parts.slice(2, 4).join(',').trim();
                   return (
                     <div
                       key={place.place_id}
@@ -489,25 +368,15 @@ export default function RouteSetupPage() {
                         padding: '10px 14px',
                         borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
                         cursor: 'pointer',
-                        transition: 'background 0.15s',
                       }}
                       onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,229,160,0.07)'}
                       onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     >
-                      <div style={{
-                        fontSize: 13,
-                        color: 'var(--text)',
-                        fontWeight: 500,
-                        marginBottom: 2,
-                      }}>
-                        {main}
+                      <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, marginBottom: 2 }}>
+                        {parts.slice(0, 2).join(',')}
                       </div>
-                      <div style={{
-                        fontSize: 11,
-                        color: 'var(--text-dim)',
-                        fontFamily: 'var(--font-mono)',
-                      }}>
-                        {sub}
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                        {parts.slice(2, 4).join(',').trim()}
                       </div>
                     </div>
                   );
@@ -516,16 +385,29 @@ export default function RouteSetupPage() {
             )}
           </div>
 
+          {/* Route loading indicator */}
+          {routeLoading && (
+            <div style={{
+              padding: '8px 16px', background: 'rgba(0,229,160,0.05)',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 12, color: 'var(--accent)', fontFamily: 'var(--font-mono)',
+            }}>
+              <div style={{
+                width: 12, height: 12,
+                border: '2px solid var(--accent)', borderTopColor: 'transparent',
+                borderRadius: '50%', animation: 'spin 0.7s linear infinite',
+              }} />
+              Fetching road route...
+            </div>
+          )}
+
           {/* Stops list */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px' }}>
             <div style={{
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-dim)',
-              letterSpacing: 1,
-              marginBottom: 10,
-              display: 'flex',
-              justifyContent: 'space-between',
+              fontSize: 10, fontFamily: 'var(--font-mono)',
+              color: 'var(--text-dim)', letterSpacing: 1,
+              marginBottom: 10, display: 'flex', justifyContent: 'space-between',
             }}>
               <span>STOPS</span>
               <span style={{ color: stops.length >= 2 ? 'var(--accent)' : 'var(--text-dim)' }}>
@@ -534,147 +416,60 @@ export default function RouteSetupPage() {
             </div>
 
             {stops.length === 0 ? (
-              <div style={{
-                textAlign: 'center',
-                padding: '30px 0',
-                color: 'var(--text-dim)',
-                fontSize: 13,
-                lineHeight: 1.8,
-              }}>
+              <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-dim)', fontSize: 13 }}>
                 <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.3 }}>◎</div>
-                Search for a location above
-                <br />
-                or click directly on the map
+                Search above or click the map
               </div>
-            ) : (
-              stops.map((stop, i) => (
-                <div key={i} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '9px 0',
-                  borderBottom: '1px solid var(--border)',
+            ) : stops.map((stop, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '9px 0', borderBottom: '1px solid var(--border)',
+              }}>
+                <div style={{
+                  width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                  background: i === 0 ? 'rgba(0,229,160,0.15)' : i === stops.length - 1 ? 'rgba(255,77,77,0.15)' : 'var(--surface2)',
+                  border: `1.5px solid ${i === 0 ? 'var(--accent)' : i === stops.length - 1 ? 'var(--danger)' : 'var(--border)'}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  color: i === 0 ? 'var(--accent)' : i === stops.length - 1 ? 'var(--danger)' : 'var(--text-dim)',
                 }}>
-                  {/* Order badge */}
-                  <div style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: '50%',
-                    background: i === 0
-                      ? 'rgba(0,229,160,0.15)'
-                      : i === stops.length - 1
-                      ? 'rgba(255,77,77,0.15)'
-                      : 'var(--surface2)',
-                    border: `1.5px solid ${
-                      i === 0 ? 'var(--accent)'
-                      : i === stops.length - 1 ? 'var(--danger)'
-                      : 'var(--border)'}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 10,
-                    color: i === 0
-                      ? 'var(--accent)'
-                      : i === stops.length - 1
-                      ? 'var(--danger)'
-                      : 'var(--text-dim)',
-                    flexShrink: 0,
-                  }}>
-                    {i + 1}
+                  {i + 1}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {stop.name}
                   </div>
-
-                  {/* Stop name */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 13,
-                      fontWeight: 500,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {stop.name}
-                    </div>
-                    <div style={{
-                      fontSize: 10,
-                      color: 'var(--text-dim)',
-                      fontFamily: 'var(--font-mono)',
-                      marginTop: 1,
-                    }}>
-                      {stop.lat.toFixed(4)}, {stop.lng.toFixed(4)}
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                    <button
-                      onClick={() => moveStop(i, -1)}
-                      disabled={i === 0}
-                      title="Move up"
-                      style={{
-                        width: 24, height: 24,
-                        background: 'var(--surface2)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 4,
-                        color: i === 0 ? 'var(--border)' : 'var(--text-dim)',
-                        fontSize: 11,
-                        cursor: i === 0 ? 'not-allowed' : 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => moveStop(i, 1)}
-                      disabled={i === stops.length - 1}
-                      title="Move down"
-                      style={{
-                        width: 24, height: 24,
-                        background: 'var(--surface2)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 4,
-                        color: i === stops.length - 1 ? 'var(--border)' : 'var(--text-dim)',
-                        fontSize: 11,
-                        cursor: i === stops.length - 1 ? 'not-allowed' : 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      onClick={() => removeStop(i)}
-                      title="Remove stop"
-                      style={{
-                        width: 24, height: 24,
-                        background: 'transparent',
-                        border: '1px solid var(--danger)',
-                        borderRadius: 4,
-                        color: 'var(--danger)',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}
-                    >
-                      ✕
-                    </button>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
+                    {stop.lat.toFixed(4)}, {stop.lng.toFixed(4)}
                   </div>
                 </div>
-              ))
-            )}
+                <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                  {[
+                    { label: '↑', disabled: i === 0,              action: () => moveStop(i, -1) },
+                    { label: '↓', disabled: i === stops.length-1, action: () => moveStop(i,  1) },
+                    { label: '✕', disabled: false,                action: () => removeStop(i), danger: true },
+                  ].map(({ label, disabled, action, danger }) => (
+                    <button key={label} onClick={action} disabled={disabled} style={{
+                      width: 24, height: 24, fontSize: 11,
+                      background: danger ? 'transparent' : 'var(--surface2)',
+                      border: `1px solid ${danger ? 'var(--danger)' : 'var(--border)'}`,
+                      borderRadius: 4,
+                      color: disabled ? 'var(--border)' : danger ? 'var(--danger)' : 'var(--text-dim)',
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Save footer */}
-          <div style={{
-            padding: '14px 16px',
-            borderTop: '1px solid var(--border)',
-          }}>
+          <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)' }}>
             {error && (
-              <div style={{
-                color: 'var(--danger)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                marginBottom: 10,
-              }}>
+              <div style={{ color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 12, marginBottom: 10 }}>
                 {error}
               </div>
             )}
@@ -682,17 +477,12 @@ export default function RouteSetupPage() {
               onClick={handleSave}
               disabled={saving || stops.length < 2}
               style={{
-                width: '100%',
-                padding: '13px',
+                width: '100%', padding: '13px',
                 background: saving || stops.length < 2 ? 'var(--border)' : 'var(--accent)',
-                color: saving || stops.length < 2 ? 'var(--text-dim)' : '#0a0c10',
-                borderRadius: 10,
-                fontWeight: 700,
-                fontSize: 14,
-                fontFamily: 'var(--font-mono)',
-                letterSpacing: 1,
-                border: 'none',
-                cursor: saving || stops.length < 2 ? 'not-allowed' : 'pointer',
+                color:      saving || stops.length < 2 ? 'var(--text-dim)' : '#0a0c10',
+                borderRadius: 10, fontWeight: 700, fontSize: 14,
+                fontFamily: 'var(--font-mono)', letterSpacing: 1,
+                border: 'none', cursor: saving || stops.length < 2 ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s',
               }}
             >
@@ -701,68 +491,38 @@ export default function RouteSetupPage() {
           </div>
         </div>
 
-        {/* ── Map ── */}
+        {/* Map */}
         <div style={{ flex: 1, position: 'relative' }}>
           <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-          {/* Map instruction overlay — top center */}
+          {/* Instruction overlay */}
           {!pendingStop && (
             <div style={{
-              position: 'absolute',
-              top: 14,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(10,12,16,0.85)',
-              border: '1px solid var(--border)',
-              borderRadius: 20,
-              padding: '7px 16px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11,
-              color: 'var(--text-dim)',
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              zIndex: 1000,
+              position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(10,12,16,0.85)', border: '1px solid var(--border)',
+              borderRadius: 20, padding: '7px 16px',
+              fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)',
+              pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 100,
               backdropFilter: 'blur(4px)',
             }}>
               Search on the left — or click map to place a stop
             </div>
           )}
 
-          {/* Pending stop confirmation card */}
+          {/* Pending stop confirm card */}
           {pendingStop && (
             <div style={{
-              position: 'absolute',
-              bottom: 24,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'var(--surface)',
-              border: '1px solid var(--accent)',
-              borderRadius: 14,
-              padding: '16px 18px',
-              zIndex: 1000,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-              width: 340,
-              backdropFilter: 'blur(4px)',
+              position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+              background: 'var(--surface)', border: '1px solid var(--accent)',
+              borderRadius: 14, padding: '16px 18px', zIndex: 200,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)', width: 340,
             }}>
-              <div style={{
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--accent)',
-                letterSpacing: 2,
-                marginBottom: 10,
-              }}>
+              <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent)', letterSpacing: 2, marginBottom: 10 }}>
                 CONFIRM STOP {stops.length + 1}
               </div>
-
-              <div style={{
-                fontSize: 11,
-                color: 'var(--text-dim)',
-                fontFamily: 'var(--font-mono)',
-                marginBottom: 10,
-              }}>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
                 {pendingStop.lat.toFixed(5)}, {pendingStop.lng.toFixed(5)}
               </div>
-
               <input
                 autoFocus
                 value={stopLabel}
@@ -770,47 +530,32 @@ export default function RouteSetupPage() {
                 onKeyDown={(e) => e.key === 'Enter' && confirmPendingStop()}
                 placeholder="Stop name (e.g. Main Gate)"
                 style={{
-                  width: '100%',
-                  padding: '9px 12px',
-                  background: 'var(--surface2)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                  fontSize: 13,
-                  marginBottom: 12,
+                  width: '100%', padding: '9px 12px',
+                  background: 'var(--surface2)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', fontSize: 13, marginBottom: 12,
                 }}
               />
-
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   onClick={confirmPendingStop}
                   disabled={!stopLabel.trim()}
                   style={{
-                    flex: 1,
-                    padding: '10px',
+                    flex: 1, padding: '10px',
                     background: stopLabel.trim() ? 'var(--accent)' : 'var(--border)',
-                    color: stopLabel.trim() ? '#0a0c10' : 'var(--text-dim)',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                    fontSize: 13,
-                    fontFamily: 'var(--font-mono)',
-                    border: 'none',
-                    cursor: stopLabel.trim() ? 'pointer' : 'not-allowed',
-                    letterSpacing: 1,
+                    color:      stopLabel.trim() ? '#0a0c10' : 'var(--text-dim)',
+                    borderRadius: 8, fontWeight: 700, fontSize: 13,
+                    fontFamily: 'var(--font-mono)', border: 'none',
+                    cursor: stopLabel.trim() ? 'pointer' : 'not-allowed', letterSpacing: 1,
                   }}
                 >
                   ADD STOP
                 </button>
                 <button
-                  onClick={cancelPendingStop}
+                  onClick={() => { setPendingStop(null); setStopLabel(''); }}
                   style={{
-                    padding: '10px 16px',
-                    background: 'transparent',
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    color: 'var(--text-dim)',
-                    fontSize: 13,
-                    cursor: 'pointer',
+                    padding: '10px 16px', background: 'transparent',
+                    border: '1px solid var(--border)', borderRadius: 8,
+                    color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer',
                   }}
                 >
                   Cancel
@@ -821,10 +566,7 @@ export default function RouteSetupPage() {
         </div>
       </div>
 
-      {/* Spinner keyframe */}
-      <style>{`
-        @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
-      `}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
