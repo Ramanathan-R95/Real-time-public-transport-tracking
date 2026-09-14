@@ -5,22 +5,30 @@ import { useInterpolator } from '../hooks/useInterpolator';
 import MapView    from '../components/user/MapView';
 import ETAPanel   from '../components/user/ETAPanel';
 import StaleAlert from '../components/user/StaleAlert';
-
+import { useStopAnnouncer } from '../hooks/useStopAnnouncer';
 const STATUS_CFG = {
   waiting:             { color: 'var(--text-dim)', label: 'Waiting'     },
   started:             { color: 'var(--accent)',   label: 'Running'     },
   ended:               { color: 'var(--danger)',   label: 'Trip ended'  },
   driver_disconnected: { color: 'var(--warning)',  label: 'Signal lost' },
 };
-
 export default function UserPage() {
   const [routes,           setRoutes]           = useState([]);
   const [selectedRouteId,  setSelectedRouteId]  = useState('');
   const [selectedRoute,    setSelectedRoute]    = useState(null);
   const [selectedDriverId, setSelectedDriverId] = useState(null);
   const [mapH, setMapH] = useState('50vh');
-  const autoSelectedRef = useRef(false);
+  const [announcerEnabled, setAnnouncerEnabled] = useState(true);
 
+  const autoSelectedRef = useRef(false);
+  
+
+// Request speech synthesis voices on mount (some browsers need this)
+  useEffect(() => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+    }
+  }, []);
   // Responsive map height
   useEffect(() => {
     const fn = () => setMapH(window.innerWidth < 768 ? '40vh' : '50vh');
@@ -87,6 +95,11 @@ export default function UserPage() {
   const sortedStops = selectedRoute?.stops
     ? [...selectedRoute.stops].sort((a, b) => a.order - b.order)
     : [];
+  const { testAnnounce } = useStopAnnouncer({
+  currentPosition: displayPos,
+  stops:           sortedStops,
+  enabled:         announcerEnabled && !!selectedDriverId,
+  });
 
   return (
     <div style={{
@@ -133,7 +146,24 @@ export default function UserPage() {
             </option>
           ))}
         </select>
-
+          {/* Sound toggle — add inside bus selector div, before status badge */}
+        <button
+          onClick={() => setAnnouncerEnabled((v) => !v)}
+          title={announcerEnabled ? 'Mute announcements' : 'Enable announcements'}
+          style={{
+            padding:      '5px 10px',
+            borderRadius: 20,
+            border:       `1px solid ${announcerEnabled ? 'var(--accent)' : 'var(--border2)'}`,
+            background:   announcerEnabled ? 'rgba(0,229,160,0.08)' : 'transparent',
+            color:        announcerEnabled ? 'var(--accent)' : 'var(--text-dim)',
+            fontSize:     16,
+            cursor:       'pointer',
+            flexShrink:   0,
+            transition:   'all 0.2s',
+          }}
+        >
+          {announcerEnabled ? '🔊' : '🔇'}
+        </button>
         {/* Connection status */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
