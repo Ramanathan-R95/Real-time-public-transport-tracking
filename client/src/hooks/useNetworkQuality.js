@@ -6,14 +6,14 @@ export function useNetworkQuality() {
       || navigator.mozConnection
       || navigator.webkitConnection;
 
-    if (!conn) return { type: '4g', interval: 3000, label: 'Good' };
+    if (!conn) return { type: '4g', interval: 1500, label: 'Good' };
 
     const type = conn.effectiveType;
-    // Tighter intervals for smoother interpolation
-    if (type === '4g') return { type, interval: 3000,  label: 'Excellent' };
-    if (type === '3g') return { type, interval: 6000,  label: 'Fair' };
-    if (type === '2g') return { type, interval: 12000, label: 'Weak' };
-    return { type: 'slow-2g', interval: 20000, label: 'Offline' };
+    // Keep updates frequent enough for smooth in-app movement.
+    if (type === '4g') return { type, interval: 1500,  label: 'Excellent' };
+    if (type === '3g') return { type, interval: 2500,  label: 'Fair' };
+    if (type === '2g') return { type, interval: 5000, label: 'Weak' };
+    return { type: 'slow-2g', interval: 8000, label: 'Offline' };
   };
 
   const [quality, setQuality] = useState(getQuality);

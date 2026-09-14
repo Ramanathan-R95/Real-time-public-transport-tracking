@@ -92,7 +92,7 @@ export default function DriverPage() {
   // Subsequent pings: respect quality interval
   const minInterval = lastSentTimeRef.current === 0
     ? 0
-    : Math.min(qualityRef.current.interval, 4000); // cap at 4s max
+    : Math.min(qualityRef.current.interval, 2500); // keep updates frequent for smooth motion
 
   if (now - lastSentTimeRef.current < minInterval) return;
   lastSentTimeRef.current = now;
@@ -354,7 +354,7 @@ export default function DriverPage() {
                     <div key={label}>
                       <div style={{
                         fontSize: 10, color: 'var(--text-dim)',
-                        fontFamily: 'var(--font-mono)', letterSpacing: 1, marginBottom: 4,
+                        fontFamily: 'var(--font-mono', letterSpacing: 1, marginBottom: 4,
                       }}>
                         {label}
                       </div>

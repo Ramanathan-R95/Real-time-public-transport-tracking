@@ -51,8 +51,9 @@ export function useGeolocation({ enabled = false, onPosition }) {
       },
       {
         enableHighAccuracy: true,
-        maximumAge:         0,       // always fresh
-        timeout:            20000,
+        maximumAge:         1000,
+        timeout:            10000,
+        distanceFilter:     0,
       }
     );
 

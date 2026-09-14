@@ -90,7 +90,7 @@ export default function UserPage() {
     ? { lat: Number(position.lat), lng: Number(position.lng) }
     : null;
 
-  const displayPos  = useInterpolator({ targetPosition, intervalMs: 8000 });
+  const displayPos  = useInterpolator({ targetPosition, intervalMs: 1500 });
   const statusCfg   = STATUS_CFG[tripStatus] || STATUS_CFG.waiting;
   const sortedStops = selectedRoute?.stops
     ? [...selectedRoute.stops].sort((a, b) => a.order - b.order)
