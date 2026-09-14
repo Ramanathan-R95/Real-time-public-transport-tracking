@@ -18,7 +18,7 @@ function calcBearing(lat1, lng1, lat2, lng2) {
 
 function createBusElement(vehicleNum, isSelected) {
   const el    = document.createElement('div');
-  const size  = isSelected ? 56 : 44;
+  const size  = isSelected ? 42 : 30;
   const color = isSelected ? '#00e5a0' : '#94a3b8';
   const ring  = isSelected ? '#00e5a0' : '#334155';
   const label = (vehicleNum || 'BUS').slice(0, 9);
@@ -28,24 +28,24 @@ function createBusElement(vehicleNum, isSelected) {
   const tipY   = half - arrowH;
   const baseY  = half + arrowH * 0.35;
 
-  el.style.cssText = `width:${size}px;height:${size + 18}px;cursor:pointer;`;
+  el.style.cssText = `width:${size}px;height:${size + 12}px;cursor:pointer;`;
   el.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg"
-      width="${size}" height="${size + 18}"
-      viewBox="0 0 ${size} ${size + 18}">
+      width="${size}" height="${size + 12}"
+      viewBox="0 0 ${size} ${size + 12}">
       <circle cx="${half}" cy="${half}" r="${half - 1}"
         fill="#0a0c10" stroke="${ring}"
-        stroke-width="${isSelected ? 2.5 : 1.5}"/>
-      <circle cx="${half}" cy="${half}" r="${half - 8}"
+        stroke-width="${isSelected ? 2.2 : 1.3}"/>
+      <circle cx="${half}" cy="${half}" r="${half - 7}"
         fill="${color}" opacity="0.12"/>
       <polygon
         points="${half},${tipY} ${half - arrowW},${baseY} ${half},${baseY - size * 0.07} ${half + arrowW},${baseY}"
         fill="${color}" stroke="#0a0c10" stroke-width="0.5"/>
-      <circle cx="${half}" cy="${half}" r="3.5" fill="${color}"/>
-      <rect x="1" y="${size + 1}" width="${size - 2}" height="15"
+      <circle cx="${half}" cy="${half}" r="3" fill="${color}"/>
+      <rect x="1" y="${size + 1}" width="${size - 2}" height="10"
         rx="4" fill="#0a0c10" stroke="${color}" stroke-width="1"/>
-      <text x="${half}" y="${size + 11.5}"
-        font-family="monospace" font-size="7.5"
+      <text x="${half}" y="${size + 8.5}"
+        font-family="monospace" font-size="6.5"
         font-weight="bold" text-anchor="middle"
         fill="${color}">${label}</text>
     </svg>`;
@@ -61,12 +61,12 @@ function createStopElement(order, isFirst, isLast) {
   const el    = document.createElement('div');
   const color = isFirst ? '#00e5a0' : isLast ? '#ff4d4d' : '#475569';
   const label = isFirst ? 'S' : isLast ? 'E' : String(order);
-  el.style.cssText = 'width:28px;height:28px;cursor:pointer;';
+  el.style.cssText = 'width:20px;height:20px;cursor:pointer;';
   el.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
-      <circle cx="14" cy="14" r="12" fill="#0a0c10" stroke="${color}" stroke-width="2"/>
-      <text x="14" y="18" font-family="monospace"
-        font-size="${label.length > 1 ? 7 : 10}"
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="8" fill="#0a0c10" stroke="${color}" stroke-width="2"/>
+      <text x="10" y="13" font-family="monospace"
+        font-size="${label.length > 1 ? 6 : 8}"
         font-weight="bold" text-anchor="middle"
         fill="${color}">${label}</text>
     </svg>`;
@@ -124,7 +124,7 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     lastPanPosRef.current  = { lat: Number(bus.lat), lng: Number(bus.lng) };
     map.flyTo({
       center:   [Number(bus.lng), Number(bus.lat)],
-      zoom:     17,
+      zoom:     15,
       speed:    1.4,
       curve:    1,
       essential: true,
@@ -144,7 +144,7 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     map.fitBounds(
       [[Math.min(...lngs), Math.min(...lats)],
        [Math.max(...lngs), Math.max(...lats)]],
-      { padding: 60, maxZoom: 16, duration: 1000 }
+      { padding: 60, maxZoom: 15, duration: 1000 }
     );
   }
 
@@ -162,7 +162,7 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
       container: containerRef.current,
       style:     'https://tiles.openfreemap.org/styles/liberty',
       center:    [78.8537, 10.9152],
-      zoom:      13,
+      zoom:      14,
     });
 
     map.addControl(new maplibregl.NavigationControl({
