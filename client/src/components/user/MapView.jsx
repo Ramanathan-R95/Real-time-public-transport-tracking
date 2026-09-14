@@ -301,23 +301,31 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
     activeBuses.forEach((bus) => {
       if (!bus.lat || !bus.lng) return;
 
-      const lat        = Number(bus.lat);
-      const lng        = Number(bus.lng);
+      const liveLat = displayPos?.lat;
+      const liveLng = displayPos?.lng;
+      const selectedLivePos = (selectedDriverId && bus.driverId === selectedDriverId && liveLat != null && liveLng != null)
+        ? { lat: Number(liveLat), lng: Number(liveLng) }
+        : null;
+
+      const targetLat = selectedLivePos ? selectedLivePos.lat : Number(bus.lat);
+      const targetLng = selectedLivePos ? selectedLivePos.lng : Number(bus.lng);
+      if (!Number.isFinite(targetLat) || !Number.isFinite(targetLng)) return;
+
       const isSelected = bus.driverId === selectedDriverId;
-      const existing   = markersRef.current[bus.driverId];
+      const existing = markersRef.current[bus.driverId];
 
       let deg = existing?.bearing ?? 0;
       if (existing?.prevLat !== undefined) {
-        const moved = haversine(existing.prevLat, existing.prevLng, lat, lng);
+        const moved = haversine(existing.prevLat, existing.prevLng, targetLat, targetLng);
         if (moved > 2) {
-          const b = calcBearing(existing.prevLat, existing.prevLng, lat, lng);
+          const b = calcBearing(existing.prevLat, existing.prevLng, targetLat, targetLng);
           if (!isNaN(b)) deg = b;
         }
       }
 
       if (!existing) {
-        const el     = createBusElement(bus.vehicleNumber, isSelected);
-        const popup  = new maplibregl.Popup({ offset: 30, closeButton: false })
+        const el = createBusElement(bus.vehicleNumber, isSelected);
+        const popup = new maplibregl.Popup({ offset: 30, closeButton: false })
           .setHTML(`
             <div style="font-family:monospace;font-size:12px;
               background:#0f1219;color:#e2e8f0;
@@ -327,33 +335,57 @@ export default function MapView({ displayPos, stops, activeBuses = [], selectedD
             </div>`);
 
         const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-          .setLngLat([lng, lat])
+          .setLngLat([targetLng, targetLat])
           .setRotation(deg)
           .setPopup(popup)
           .addTo(map);
 
         markersRef.current[bus.driverId] = {
           marker, bearing: deg,
-          prevLat: lat, prevLng: lng,
+          prevLat: targetLat, prevLng: targetLng,
           isSelected, el,
         };
       } else {
         existing.bearing = deg;
-        existing.marker.setLngLat([lng, lat]);
+        existing.marker.setLngLat([targetLng, targetLat]);
         existing.marker.setRotation(deg);
 
         if (existing.isSelected !== isSelected) {
+          const oldMarker = existing.marker;
+          oldMarker.remove();
+
           const newEl = createBusElement(bus.vehicleNumber, isSelected);
-          existing.el.replaceWith(newEl);
-          existing.el         = newEl;
-          existing.isSelected = isSelected;
+          const popup = new maplibregl.Popup({ offset: 30, closeButton: false })
+            .setHTML(`
+              <div style="font-family:monospace;font-size:12px;
+                background:#0f1219;color:#e2e8f0;
+                padding:8px 12px;border-radius:8px">
+                <div style="color:#00e5a0;font-weight:bold">${bus.vehicleNumber}</div>
+                <div style="color:#64748b;margin-top:2px">${bus.driverName}</div>
+              </div>`);
+
+          const newMarker = new maplibregl.Marker({ element: newEl, anchor: 'center' })
+            .setLngLat([targetLng, targetLat])
+            .setRotation(deg)
+            .setPopup(popup)
+            .addTo(map);
+
+          markersRef.current[bus.driverId] = {
+            marker: newMarker,
+            bearing: deg,
+            prevLat: targetLat,
+            prevLng: targetLng,
+            isSelected,
+            el: newEl,
+          };
+          return;
         }
 
-        existing.prevLat = lat;
-        existing.prevLng = lng;
+        existing.prevLat = targetLat;
+        existing.prevLng = targetLng;
       }
     });
-  }, [activeBuses, selectedDriverId]);
+  }, [activeBuses, selectedDriverId, displayPos]);
 
   // ── Smooth interpolated movement ──
   useEffect(() => {
